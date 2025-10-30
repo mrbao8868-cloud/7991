@@ -1,14 +1,18 @@
+
+
 import React, { useState, useEffect } from 'react';
-import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec } from '../types';
+import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec, GenerationOptions } from '../types';
 import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, SparkleIcon, KeyIcon } from './icons';
-import { generateAllQuestionsForTopics, generateSpecification } from '../services/geminiService';
+import { generateAllQuestionsForTopics, generateSpecification, generateMatrixFromImages } from '../services/geminiService';
 import MathRenderer from './MathRenderer';
-import UploadScreen from './UploadScreen';
+
 
 declare const htmlToDocx: any;
 
 interface ExamWorkspaceProps {
     examConfig: ExamConfig;
+    documentImages: string[];
+    generationOptions: GenerationOptions | null;
     apiKeys: string[];
     activeApiKey: string | null;
     onBack: () => void;
@@ -69,16 +73,16 @@ const GenerationPlaceholder = ({ icon, title, description, buttonText, onGenerat
     </div>
 );
 
-const Stepper: React.FC<{ activeTab: WorkspaceTab; specDone: boolean; questionsDone: boolean; onTabChange: (tab: WorkspaceTab) => void; canAccessSpec: boolean; canAccessQuestions: boolean }> = 
-({ activeTab, specDone, questionsDone, onTabChange, canAccessSpec, canAccessQuestions }) => {
+const Stepper: React.FC<{ activeTab: WorkspaceTab; matrixDone: boolean; specDone: boolean; questionsDone: boolean; onTabChange: (tab: WorkspaceTab) => void; canAccessSpec: boolean; canAccessQuestions: boolean }> = 
+({ activeTab, matrixDone, specDone, questionsDone, onTabChange, canAccessSpec, canAccessQuestions }) => {
     const steps = [
-        { id: 'matrix', name: '2. Ma trận', done: true },
+        { id: 'matrix', name: '2. Ma trận', done: matrixDone },
         { id: 'spec', name: '3. Bản đặc tả', done: specDone, disabled: !canAccessSpec },
         { id: 'questions', name: '4. Câu hỏi & Đáp án', done: questionsDone, disabled: !canAccessQuestions }
     ];
 
     const allSteps = [
-         { id: 'analyze', name: '1. Tài liệu', done: true },
+         { id: 'analyze', name: '1. Phân tích', done: true },
          ...steps
     ];
 
@@ -110,7 +114,7 @@ const Stepper: React.FC<{ activeTab: WorkspaceTab; specDone: boolean; questionsD
 };
 
 
-const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, activeApiKey, onBack, onApiKeyError, onSetActiveKey, onOpenApiModal, onStatusUpdate }) => {
+const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImages, generationOptions, apiKeys, activeApiKey, onBack, onApiKeyError, onSetActiveKey, onOpenApiModal, onStatusUpdate }) => {
     // Workspace state
     const [examTitle, setExamTitle] = useState('');
     const [topics, setTopics] = useState<Topic[]>([]);
@@ -118,14 +122,22 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
     const [activeTab, setActiveTab] = useState<WorkspaceTab>('matrix');
     
     // State for generation processes
+    const [isGeneratingMatrix, setIsGeneratingMatrix] = useState(true);
     const [isGeneratingSpec, setIsGeneratingSpec] = useState(false);
     const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+    const [matrixError, setMatrixError] = useState<string | null>(null);
     const [specError, setSpecError] = useState<string | null>(null);
     const [questionsError, setQuestionsError] = useState<string | null>(null);
     
     // State for DOCX export
     const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
     const [isDocxScriptReady, setIsDocxScriptReady] = useState(false);
+
+    // Auto-generate matrix on component mount
+    useEffect(() => {
+        handleGenerateMatrix();
+    }, []);
+
 
     useEffect(() => {
         if (typeof htmlToDocx === 'function') {
@@ -142,11 +154,14 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
     }, []);
 
     useEffect(() => {
+        if (isGeneratingMatrix) {
+            onStatusUpdate('AI đang đọc tài liệu và tạo Ma trận chi tiết...');
+            return;
+        }
         if (isGeneratingSpec) {
             onStatusUpdate('AI đang phân rã chủ đề và tạo Bản đặc tả chi tiết...');
             return;
         }
-        
         if (isGeneratingQuestions) {
             const completedCount = topics.filter(t => t.generationStatus === 'completed').length;
             const totalCount = topics.length;
@@ -157,7 +172,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
 
         switch (activeTab) {
             case 'matrix':
-                onStatusUpdate('Kiểm tra lại ma trận do AI đề xuất. Bấm "Tiếp tục" để tạo bản đặc tả.');
+                if (topics.length > 0) {
+                    onStatusUpdate('Kiểm tra lại ma trận do AI đề xuất. Bấm "Tiếp tục" để tạo bản đặc tả.');
+                } else {
+                    onStatusUpdate('Sẵn sàng tạo ma trận từ tài liệu.');
+                }
                 break;
             case 'spec':
                 if (specification) {
@@ -181,24 +200,40 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
             default:
                 onStatusUpdate('Sẵn sàng tạo đề thi.');
         }
-    }, [isGeneratingSpec, isGeneratingQuestions, activeTab, topics, specification, onStatusUpdate]);
-
-    const handleTopicsExtracted = (extractedData: GeneratedMatrixResponse) => {
-        if (!examConfig) return;
-        setExamTitle(extractedData.examTitle);
-        const topicsFromAI: Topic[] = extractedData.topics.map(t => ({
-            mc_knowledge: 0, mc_comprehension: 0, mc_application: 0,
-            tf_knowledge: 0, tf_comprehension: 0, tf_application: 0,
-            sa_knowledge: 0, sa_comprehension: 0, sa_application: 0,
-            essay_knowledge: 0, essay_comprehension: 0, essay_application: 0,
-            ...t,
-            id: crypto.randomUUID(),
-            questions: [],
-            generationStatus: 'pending',
-        }));
-        setTopics(topicsFromAI);
-        setActiveTab('matrix');
+    }, [isGeneratingMatrix, isGeneratingSpec, isGeneratingQuestions, activeTab, topics, specification, onStatusUpdate]);
+    
+     const handleGenerateMatrix = async () => {
+        if (!activeApiKey) {
+            onApiKeyError("Vui lòng chọn một Khóa API để tiếp tục.");
+            return;
+        }
+        setIsGeneratingMatrix(true);
+        setMatrixError(null);
+        try {
+            const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
+            const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, documentImages, examConfig, generationOptions?.scopeHint);
+            
+            if (!examConfig) return;
+            setExamTitle(extractedData.examTitle);
+            const topicsFromAI: Topic[] = extractedData.topics.map(t => ({
+                mc_knowledge: 0, mc_comprehension: 0, mc_application: 0,
+                tf_knowledge: 0, tf_comprehension: 0, tf_application: 0,
+                sa_knowledge: 0, sa_comprehension: 0, sa_application: 0,
+                essay_knowledge: 0, essay_comprehension: 0, essay_application: 0,
+                ...t,
+                id: crypto.randomUUID(),
+                questions: [],
+                generationStatus: 'pending',
+            }));
+            setTopics(topicsFromAI);
+            setActiveTab('matrix');
+        } catch (error: unknown) {
+            handleGenerationError(error, setMatrixError);
+        } finally {
+            setIsGeneratingMatrix(false);
+        }
     };
+
 
     const handleGenerationError = (error: unknown, setErrorState: (message: string) => void) => {
         console.error("Generation failed", error);
@@ -298,7 +333,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
             const blob = new Blob([fileBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `${examConfig.subject.replace(/ /g, '_')}_${examConfig.examTime.replace(/ /g, '_') || 'De-kiem-tra'}.docx`;
+            link.download = `${examConfig.subjectsSummary.replace(/ /g, '_')}_${examConfig.examTime.replace(/ /g, '_') || 'De-kiem-tra'}.docx`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -311,6 +346,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
     };
     
     const renderMatrix = () => {
+        const tnkqPointsFromConfig = examConfig.tnkqPoints;
+        const essayPointsFromConfig = examConfig.essayPoints;
+
         const groupedTopics = topics.reduce((acc, topic) => {
             (acc[topic.chapter] = acc[topic.chapter] || []).push(topic);
             return acc;
@@ -318,28 +356,31 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
     
         const totals = questionKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {} as TopicConfig);
         topics.forEach(t => questionKeys.forEach(k => { totals[k] += t[k]; }));
-    
-        const totalEssayCount = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
-        const avgEssayScore = (examConfig.essayPoints > 0 && totalEssayCount > 0) 
-            ? examConfig.essayPoints / totalEssayCount 
-            : 0;
+
+        const totalTnkqCountInMatrix = (totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) + 
+                                     (totals.tf_knowledge + totals.tf_comprehension + totals.tf_application) +
+                                     (totals.sa_knowledge + totals.sa_comprehension + totals.sa_application);
+
+        const totalEssayCountInMatrix = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
+
+        const tnkqScorePerItem = totalTnkqCountInMatrix > 0 ? tnkqPointsFromConfig / totalTnkqCountInMatrix : 0;
+        const essayScorePerItem = totalEssayCountInMatrix > 0 ? essayPointsFromConfig / totalEssayCountInMatrix : 0;
             
-        // --- Start of New, Accurate Calculations ---
         const totalMcQuestions = totals.mc_knowledge + totals.mc_comprehension + totals.mc_application;
         const totalTfQuestions = totals.tf_knowledge + totals.tf_comprehension + totals.tf_application;
         const totalSaQuestions = totals.sa_knowledge + totals.sa_comprehension + totals.sa_application;
     
-        const totalMcPoints = totalMcQuestions * 0.25;
-        const totalTfPoints = totalTfQuestions * 0.25;
-        const totalSaPoints = totalSaQuestions * 0.25;
+        const totalMcPoints = totalMcQuestions * tnkqScorePerItem;
+        const totalTfPoints = totalTfQuestions * tnkqScorePerItem;
+        const totalSaPoints = totalSaQuestions * tnkqScorePerItem;
+
         const totalTnkqPoints = totalMcPoints + totalTfPoints + totalSaPoints;
-        const totalEssayPoints = examConfig.essayPoints; // This is a fixed value from config
+        const totalEssayPoints = totalEssayCountInMatrix * essayScorePerItem;
         const actualTotalExamScore = totalTnkqPoints + totalEssayPoints;
     
-        const totalKnowPoints = (totals.mc_knowledge + totals.tf_knowledge + totals.sa_knowledge) * 0.25 + (totals.essay_knowledge * avgEssayScore);
-        const totalCompPoints = (totals.mc_comprehension + totals.tf_comprehension + totals.sa_comprehension) * 0.25 + (totals.essay_comprehension * avgEssayScore);
-        const totalAppPoints = (totals.mc_application + totals.tf_application + totals.sa_application) * 0.25 + (totals.essay_application * avgEssayScore);
-        // --- End of New, Accurate Calculations ---
+        const totalKnowPoints = (totals.mc_knowledge + totals.tf_knowledge + totals.sa_knowledge) * tnkqScorePerItem + (totals.essay_knowledge * essayScorePerItem);
+        const totalCompPoints = (totals.mc_comprehension + totals.tf_comprehension + totals.sa_comprehension) * tnkqScorePerItem + (totals.essay_comprehension * essayScorePerItem);
+        const totalAppPoints = (totals.mc_application + totals.tf_application + totals.sa_application) * tnkqScorePerItem + (totals.essay_application * essayScorePerItem);
     
         const formatPoints = (points: number) => points.toFixed(2).replace('.', ',');
     
@@ -360,18 +401,18 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                         <thead className="align-middle text-center font-semibold bg-slate-50">
                              <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-2 w-[3%]">TT</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[15%]">Chủ đề/Chương</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[25%]">Nội dung/đơn vị kiến thức</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[10%]">Chủ đề/Chương</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[60%]">Nội dung/đơn vị kiến thức</th>
                                 <th colSpan={12} className="border border-slate-300 p-2">Mức độ đánh giá</th>
                                 <th colSpan={4} className="border border-slate-300 p-2">Tổng</th>
                             </tr>
                             <tr>
                                 <th colSpan={9} className="border border-slate-300 p-2">TNKQ</th>
                                 <th colSpan={3} className="border border-slate-300 p-2">Tự luận</th>
-                                <th rowSpan={3} className="border border-slate-300 p-2">Biết</th>
-                                <th rowSpan={3} className="border border-slate-300 p-2">Hiểu</th>
-                                <th rowSpan={3} className="border border-slate-300 p-2">Vận dụng</th>
-                                <th rowSpan={3} className="border border-slate-300 p-2 w-[5%]">Tỉ lệ % điểm</th>
+                                <th rowSpan={3} className="border border-slate-300 p-2 w-[2%]">Biết</th>
+                                <th rowSpan={3} className="border border-slate-300 p-2 w-[2%]">Hiểu</th>
+                                <th rowSpan={3} className="border border-slate-300 p-2 w-[2%]">Vận dụng</th>
+                                <th rowSpan={3} className="border border-slate-300 p-2 w-[3%]">Tỉ lệ % điểm</th>
                             </tr>
                             <tr>
                                 <th colSpan={3} className="border border-slate-300 p-2">Nhiều lựa chọn</th>
@@ -380,10 +421,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                                 <th colSpan={3} className="border border-slate-300 p-2">Tự luận</th>
                             </tr>
                             <tr>
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`mc-${i}`} className="border border-slate-300 p-2">{level}</th>)}
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`tf-${i}`} className="border border-slate-300 p-2">{level}</th>)}
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`sa-${i}`} className="border border-slate-300 p-2">{level}</th>)}
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`essay-${i}`} className="border border-slate-300 p-2">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`mc-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`tf-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`sa-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`essay-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
                             </tr>
                         </thead>
                         <tbody>
@@ -393,11 +434,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                                 <React.Fragment key={chapter}>
                                     {chapterTopics.map((topic, topicIndex) => {
                                         const knowCount = topic.mc_knowledge + topic.tf_knowledge + topic.sa_knowledge + topic.essay_knowledge;
-                                        const knowScore = (topic.mc_knowledge + topic.tf_knowledge + topic.sa_knowledge) * 0.25 + (topic.essay_knowledge * avgEssayScore);
+                                        const knowScore = (topic.mc_knowledge + topic.tf_knowledge + topic.sa_knowledge) * tnkqScorePerItem + (topic.essay_knowledge * essayScorePerItem);
                                         const compCount = topic.mc_comprehension + topic.tf_comprehension + topic.sa_comprehension + topic.essay_comprehension;
-                                        const compScore = (topic.mc_comprehension + topic.tf_comprehension + topic.sa_comprehension) * 0.25 + (topic.essay_comprehension * avgEssayScore);
+                                        const compScore = (topic.mc_comprehension + topic.tf_comprehension + topic.sa_comprehension) * tnkqScorePerItem + (topic.essay_comprehension * essayScorePerItem);
                                         const appCount = topic.mc_application + topic.tf_application + topic.sa_application + topic.essay_application;
-                                        const appScore = (topic.mc_application + topic.tf_application + topic.sa_application) * 0.25 + (topic.essay_application * avgEssayScore);
+                                        const appScore = (topic.mc_application + topic.tf_application + topic.sa_application) * tnkqScorePerItem + (topic.essay_application * essayScorePerItem);
     
                                         const rowTotalScore = knowScore + compScore + appScore;
                                         const rowPercentage = actualTotalExamScore > 0 ? `${Math.round((rowTotalScore / actualTotalExamScore) * 100)}` : '0';
@@ -407,18 +448,18 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                                                 {topicIndex === 0 && <td rowSpan={chapterTopics.length} className="border border-slate-300 p-2 font-bold text-center align-middle">{++chapterIndex}</td>}
                                                 {topicIndex === 0 && <td rowSpan={chapterTopics.length} className="border border-slate-300 p-2 text-left font-semibold align-top">{chapter}</td>}
                                                 <td className="border border-slate-300 p-2 text-left align-middle">{topic.name}</td>
-                                                {renderMatrixCell(topic.mc_knowledge, topic.mc_knowledge * 0.25)}
-                                                {renderMatrixCell(topic.mc_comprehension, topic.mc_comprehension * 0.25)}
-                                                {renderMatrixCell(topic.mc_application, topic.mc_application * 0.25)}
-                                                {renderMatrixCell(topic.tf_knowledge, topic.tf_knowledge * 0.25)}
-                                                {renderMatrixCell(topic.tf_comprehension, topic.tf_comprehension * 0.25)}
-                                                {renderMatrixCell(topic.tf_application, topic.tf_application * 0.25)}
-                                                {renderMatrixCell(topic.sa_knowledge, topic.sa_knowledge * 0.25)}
-                                                {renderMatrixCell(topic.sa_comprehension, topic.sa_comprehension * 0.25)}
-                                                {renderMatrixCell(topic.sa_application, topic.sa_application * 0.25)}
-                                                {renderMatrixCell(topic.essay_knowledge, topic.essay_knowledge * avgEssayScore)}
-                                                {renderMatrixCell(topic.essay_comprehension, topic.essay_comprehension * avgEssayScore)}
-                                                {renderMatrixCell(topic.essay_application, topic.essay_application * avgEssayScore)}
+                                                {renderMatrixCell(topic.mc_knowledge, topic.mc_knowledge * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.mc_comprehension, topic.mc_comprehension * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.mc_application, topic.mc_application * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.tf_knowledge, topic.tf_knowledge * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.tf_comprehension, topic.tf_comprehension * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.tf_application, topic.tf_application * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.sa_knowledge, topic.sa_knowledge * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.sa_comprehension, topic.sa_comprehension * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.sa_application, topic.sa_application * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.essay_knowledge, topic.essay_knowledge * essayScorePerItem)}
+                                                {renderMatrixCell(topic.essay_comprehension, topic.essay_comprehension * essayScorePerItem)}
+                                                {renderMatrixCell(topic.essay_application, topic.essay_application * essayScorePerItem)}
                                                 {renderMatrixCell(knowCount, knowScore)}
                                                 {renderMatrixCell(compCount, compScore)}
                                                 {renderMatrixCell(appCount, appScore)}
@@ -435,7 +476,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                                 <td colSpan={3} className="border border-slate-300 p-2">{totalMcQuestions}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{totalTfQuestions}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{totalSaQuestions}</td>
-                                <td colSpan={3} className="border border-slate-300 p-2">{totalEssayCount}</td>
+                                <td colSpan={3} className="border border-slate-300 p-2">{totalEssayCountInMatrix}</td>
                                 <td className="border border-slate-300 p-2">{totals.mc_knowledge + totals.tf_knowledge + totals.sa_knowledge + totals.essay_knowledge}</td>
                                 <td className="border border-slate-300 p-2">{totals.mc_comprehension + totals.tf_comprehension + totals.sa_comprehension + totals.essay_comprehension}</td>
                                 <td className="border border-slate-300 p-2">{totals.mc_application + totals.tf_application + totals.sa_application + totals.essay_application}</td>
@@ -470,6 +511,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
 
     const renderSpecification = () => { 
         if (!specification || !Array.isArray(specification)) return null;
+        
+        const tnkqPointsFromConfig = examConfig.tnkqPoints;
+        const essayPointsFromConfig = examConfig.essayPoints;
 
         const specTotals = questionKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {} as TopicConfig);
         specification.forEach(specTopic => {
@@ -481,11 +525,17 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                 });
             }
         });
+        
+        const totalTnkqCountFromSpec = (specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application) +
+                                   (specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application) +
+                                   (specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application);
+        
+        const tnkqScorePerItem = totalTnkqCountFromSpec > 0 ? tnkqPointsFromConfig / totalTnkqCountFromSpec : 0;
 
-        const mcScore = (specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application) * 0.25;
-        const tfScore = (specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application) * 0.25;
-        const saScore = (specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application) * 0.25;
-        const essayScore = examConfig.essayPoints;
+        const mcScore = (specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application) * tnkqScorePerItem;
+        const tfScore = (specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application) * tnkqScorePerItem;
+        const saScore = (specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application) * tnkqScorePerItem;
+        const essayScore = essayPointsFromConfig;
         const totalScore = mcScore + tfScore + saScore + essayScore;
         const formatScore = (score: number) => {
             if (score === 0) return '';
@@ -525,9 +575,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                         <thead className="align-middle text-center font-semibold bg-slate-50">
                              <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-2 w-[3%]">TT</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[15%]">Chủ đề/Chương</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[25%]">Nội dung/đơn vị kiến thức</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[27%]">Yêu cầu cần đạt</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[10%]">Chủ đề/Chương</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[23%]">Nội dung/đơn vị kiến thức</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[46%]">Yêu cầu cần đạt</th>
                                 <th colSpan={12} className="border border-slate-300 p-2">Số câu hỏi ở các mức độ đánh giá</th>
                             </tr>
                             <tr>
@@ -541,10 +591,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                                 <th colSpan={3} className="border border-slate-300 p-2">Tự luận</th>
                             </tr>
                             <tr>
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`mc-spec-${i}`} className="border border-slate-300 p-2">{level}</th>)}
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`tf-spec-${i}`} className="border border-slate-300 p-2">{level}</th>)}
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`sa-spec-${i}`} className="border border-slate-300 p-2">{level}</th>)}
-                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`essay-spec-${i}`} className="border border-slate-300 p-2">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`mc-spec-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`tf-spec-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`sa-spec-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
+                                {['Biết','Hiểu','V.dụng'].map((level, i) => <th key={`essay-spec-${i}`} className="border border-slate-300 p-2 w-[1.5%]">{level}</th>)}
                             </tr>
                         </thead>
                         <tbody>
@@ -597,7 +647,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
         );
     };
 
-    const renderExam = () => {
+    const renderExamAndAnswers = () => {
+        const tnkqPoints = examConfig.tnkqPoints;
+        const essayPoints = examConfig.essayPoints;
+
         const allQuestions: Question[] = topics.flatMap(t => 
             (t.generationStatus === 'completed' && Array.isArray(t.questions)) ? t.questions : []
         );
@@ -609,10 +662,12 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
         );
         const tuLuanQuestions = allQuestions.filter(q => q.type === QuestionType.ESSAY);
         
+        const tnkqScorePerItem = tnkqQuestions.length > 0 ? tnkqPoints / tnkqQuestions.length : 0;
+        
         let questionCounter = 0;
         const formatPoints = (points: number) => points.toLocaleString('vi-VN');
 
-        return (
+        const examPart = (
             <div>
                  <table style={{ width: '100%', border: 'none', fontFamily: 'Times New Roman, serif', fontSize: '13pt' }}>
                     <tbody>
@@ -624,7 +679,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                             <td style={{ textAlign: 'center', fontWeight: 'bold', width: '50%', verticalAlign: 'top', paddingBottom: '1em' }}>
                                 {examConfig.examTime.toUpperCase()}<br />
                                 {examConfig.schoolYear.toUpperCase()}<br />
-                                MÔN: {examConfig.subject.toUpperCase()}<br />
+                                MÔN: {examConfig.subjectsSummary.toUpperCase()}<br />
                                 <span style={{ fontWeight: 'normal' }}><i>Thời gian làm bài: {examConfig.duration}</i></span>
                             </td>
                         </tr>
@@ -643,7 +698,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
         
                 {tnkqQuestions.length > 0 && (
                     <div className="mb-8">
-                        <p className="font-bold text-center mb-2 uppercase">PHẦN TRẮC NGHIỆM ({formatPoints(examConfig.mcPoints)} điểm)</p>
+                        <p className="font-bold text-center mb-2 uppercase">PHẦN TRẮC NGHIỆM ({formatPoints(tnkqPoints)} điểm)</p>
                         <p className="italic text-center mb-4">(Học sinh tô vào phiếu trả lời trắc nghiệm)</p>
                         {tnkqQuestions.map(q => {
                             questionCounter++;
@@ -680,7 +735,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                 
                 {tuLuanQuestions.length > 0 && (
                      <div className="mb-8">
-                        <p className="font-bold text-center mb-2 uppercase">PHẦN TỰ LUẬN ({formatPoints(examConfig.essayPoints)} điểm)</p>
+                        <p className="font-bold text-center mb-2 uppercase">PHẦN TỰ LUẬN ({formatPoints(essayPoints)} điểm)</p>
                         <p className="italic text-center mb-4">(Học sinh xem đề và làm bài ở mặt sau của phiếu trắc nghiệm)</p>
                          {tuLuanQuestions.map(q => (
                             <div key={q.id} className="mb-4 exam-question">
@@ -691,27 +746,25 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                 )}
             </div>
         );
-    };
-    
-    const renderAnswerKey = () => {
-        const allQuestions: Question[] = topics.flatMap(t => (t.generationStatus === 'completed' && Array.isArray(t.questions)) ? t.questions : []);
-        const mcQuestions = allQuestions.filter(q => q.type === QuestionType.MULTIPLE_CHOICE);
-        const tfQuestions = allQuestions.filter(q => q.type === QuestionType.TRUE_FALSE);
-        const saQuestions = allQuestions.filter(q => q.type === QuestionType.SHORT_ANSWER);
-        const essayQuestions = allQuestions.filter(q => q.type === QuestionType.ESSAY);
+
+        const allAnswerQuestions: Question[] = topics.flatMap(t => (t.generationStatus === 'completed' && Array.isArray(t.questions)) ? t.questions : []);
+        const mcQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.MULTIPLE_CHOICE);
+        const tfQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.TRUE_FALSE);
+        const saQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.SHORT_ANSWER);
+        const essayQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.ESSAY);
 
         const mcMidpoint = Math.ceil(mcQuestions.length / 2);
         const mcAnswersCol1 = mcQuestions.slice(0, mcMidpoint);
         const mcAnswersCol2 = mcQuestions.slice(mcMidpoint);
     
-        return (
+        const answerPart = (
             <div>
-                <h2 className="text-2xl font-bold text-center mb-8 uppercase">ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM</h2>
+                <h2 className="text-lg font-bold text-center mb-6 uppercase">ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM</h2>
                 
                 {mcQuestions.length > 0 && (
                     <div className="mb-8 break-inside-avoid">
                         <p className="font-bold mb-2">PHẦN TRẮC NGHIỆM</p>
-                        <p className="mb-4">Mỗi câu trả lời đúng được 0,25 điểm.</p>
+                        <p className="mb-4">Mỗi câu trả lời đúng được {tnkqScorePerItem.toFixed(2).replace('.',',')} điểm.</p>
                         <div className="flex justify-center space-x-16">
                             <table className="w-auto border-collapse">
                                 <thead>
@@ -777,12 +830,31 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                 )}
             </div>
         );
+
+        return (
+            <div>
+                {examPart}
+                <div className="text-center font-bold my-10">------- HẾT -------</div>
+                <div className="break-before-page"></div>
+                {answerPart}
+            </div>
+        )
     };
-
-
+    
     const renderTabContent = () => {
         switch (activeTab) {
-            case 'matrix': return renderMatrix();
+            case 'matrix': 
+                if (isGeneratingMatrix || matrixError) {
+                    return <GenerationPlaceholder
+                        icon={<DocumentTextIcon className="w-8 h-8 text-slate-500" />}
+                        title={isGeneratingMatrix ? "AI đang tạo Ma trận..." : "Lỗi khi tạo Ma trận"}
+                        description="AI đang phân tích toàn bộ tài liệu và áp dụng cấu hình của bạn để tạo ra ma trận chi tiết. Quá trình này có thể mất vài phút."
+                        isLoading={isGeneratingMatrix}
+                        error={matrixError}
+                        onRetry={handleGenerateMatrix}
+                    />;
+                }
+                return renderMatrix();
             case 'spec':
                 if (specification) return renderSpecification();
                 return <GenerationPlaceholder 
@@ -863,18 +935,8 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                         <div className="mt-8">
                              <div className="p-6 bg-slate-50/70 rounded-lg border">
                                 {allGeneratedQuestions.length > 0 ? (
-                                    <div>
-                                        <div className='grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-4'>
-                                            <div className="space-y-4">
-                                                <h3 className="text-xl font-bold text-slate-800 border-b pb-2">ĐỀ KIỂM TRA</h3>
-                                                {renderExam()}
-                                                <div className="text-center font-bold mt-10 text-slate-700">------- HẾT -------</div>
-                                            </div>
-                                            <div className="space-y-4">
-                                                 <h3 className="text-xl font-bold text-slate-800 border-b pb-2">ĐÁP ÁN</h3>
-                                                {renderAnswerKey()}
-                                            </div>
-                                        </div>
+                                    <div className="preview-container" style={{ fontFamily: "'Times New Roman', serif", fontSize: '13pt', lineHeight: 1.5 }}>
+                                        {renderExamAndAnswers()}
                                     </div>
                                 ) : (
                                     <div className="text-center py-16">
@@ -907,22 +969,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
         }
     };
     
-    if (topics.length === 0) {
-         return (
-            <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-                 <UploadScreen
-                    apiKeys={apiKeys}
-                    activeApiKey={activeApiKey}
-                    examConfig={examConfig}
-                    onTopicsExtracted={handleTopicsExtracted}
-                    onApiKeyError={onApiKeyError}
-                    onSetActiveKey={onSetActiveKey}
-                    onStatusUpdate={onStatusUpdate}
-                />
-            </div>
-        )
-    }
-
+    const matrixDone = topics.length > 0;
     const questionsDone = topics.length > 0 && topics.every(t => t.generationStatus === 'completed');
 
     return (
@@ -938,9 +985,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
             <div className="no-print">
                 <Stepper
                     activeTab={activeTab}
+                    matrixDone={matrixDone}
                     specDone={!!specification}
                     questionsDone={questionsDone}
-                    onTabChange={(tab) => setActiveTab(tab)}
+                    onTabChange={(tab) => setActiveTab(tab as WorkspaceTab)}
                     canAccessSpec={topics.length > 0}
                     canAccessQuestions={!!specification}
                 />
@@ -963,7 +1011,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                             </button>
                          )}
                          {activeTab !== 'questions' && (
-                             <button onClick={handleNextTab} disabled={activeTab === 'spec' && !specification} className="px-6 py-2 border border-transparent text-sm font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 disabled:bg-slate-400">
+                             <button onClick={handleNextTab} disabled={(activeTab === 'matrix' && !matrixDone) || (activeTab === 'spec' && !specification)} className="px-6 py-2 border border-transparent text-sm font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 disabled:bg-slate-400">
                                 Tiếp tục
                              </button>
                          )}
@@ -975,10 +1023,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, apiKeys, acti
                  {specification && <><div className="break-before-page"></div>{renderSpecification()}</>}
                  {questionsDone && <>
                     <div className="break-before-page"></div>
-                    {renderExam()}
-                    <div className="text-center font-bold mt-10 text-slate-700">------- HẾT -------</div>
-                    <div className="break-before-page"></div>
-                    {renderAnswerKey()}
+                    {renderExamAndAnswers()}
                  </>}
             </div>
         </div>

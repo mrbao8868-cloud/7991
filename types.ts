@@ -1,3 +1,4 @@
+// FIX: Removed self-import from this file which caused declaration conflicts.
 export enum QuestionType {
   MULTIPLE_CHOICE = 'Trắc nghiệm nhiều lựa chọn',
   TRUE_FALSE = 'Trắc nghiệm Đúng/Sai',
@@ -9,6 +10,12 @@ export enum CognitiveLevel {
   KNOWLEDGE = 'Biết',
   COMPREHENSION = 'Hiểu',
   APPLICATION = 'Vận dụng',
+}
+
+export enum ExamDifficulty {
+  EASY = 'Dễ',
+  MEDIUM = 'Trung bình',
+  MEDIUM_HARD = 'Trung bình khá',
 }
 
 export interface Question {
@@ -46,6 +53,7 @@ export const questionKeys: (keyof TopicConfig)[] = [
 export interface GeneratedTopicConfig {
   chapter: string;
   name: string;
+  subject?: string; // NEU: Môn học của chủ đề này
   mc_knowledge?: number;
   mc_comprehension?: number;
   mc_application?: number;
@@ -94,6 +102,12 @@ export class ApiKeyRequiredError extends Error {
     }
 }
 
+export interface InitialAnalysisResult {
+    subjects: string[];
+    examTitle: string;
+    schoolName: string;
+    departmentName: string;
+}
 
 // New types for the Specification
 export interface ObjectiveSpec {
@@ -108,19 +122,26 @@ export interface SpecTopic {
   objectives: ObjectiveSpec[];
 }
 
-export type WorkspaceTab = 'analyze' | 'matrix' | 'spec' | 'questions';
+export type WorkspaceTab = 'matrix' | 'spec' | 'questions';
 
 export interface ExamConfig {
     schoolName: string;
     departmentName: string;
-    subject: string;
+    subjectsSummary: string;
     schoolYear: string;
     examCode?: string;
     examTime: string;
     duration: string;
-    mcPoints: number;
+    tnkqPoints: number;
     essayPoints: number;
+    mcCount: number;
+    tfCount: number;
+    saCount: number;
+    essayCount: number;
     knowledgePct: number;
     comprehensionPct: number;
     applicationPct: number;
+    isMultiSubject: boolean;
+    subjectAllocations?: { subjectName: string; percentage: number }[];
+    difficulty: ExamDifficulty;
 }

@@ -1,16 +1,16 @@
 
+
 import React, { useRef, useState, useEffect } from 'react';
 import Spinner from './Spinner';
 import { DocumentArrowUpIcon, CheckIcon, SparkleIcon, ExclamationTriangleIcon, ArrowTopRightOnSquareIcon } from './icons';
-import { GenerationOptions, GeneratedMatrixResponse, RateLimitError, ApiKeyRequiredError, ExamConfig } from '../types';
+import { InitialAnalysisResult, RateLimitError, ApiKeyRequiredError, GenerationOptions } from '../types';
 import { processPdfToImages } from '../utils/pdfProcessor';
-import { generateMatrixFromImages } from '../services/geminiService';
+import { analyzeDocumentCover } from '../services/geminiService';
 
 interface UploadScreenProps {
     apiKeys: string[];
     activeApiKey: string | null;
-    examConfig: ExamConfig;
-    onTopicsExtracted: (data: GeneratedMatrixResponse, images: string[]) => void;
+    onAnalysisComplete: (result: InitialAnalysisResult, images: string[], options: GenerationOptions) => void;
     onApiKeyError: (message?: string) => void;
     onSetActiveKey: (key: string) => void;
     onStatusUpdate: (message: string) => void;
@@ -63,13 +63,13 @@ const RateLimitErrorState: React.FC<{ message: string; onRetry: () => void; }> =
 };
 
 
-const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, examConfig, onTopicsExtracted, onApiKeyError, onSetActiveKey, onStatusUpdate }) => {
+const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAnalysisComplete, onApiKeyError, onSetActiveKey, onStatusUpdate }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     
-    const [startPage, setStartPage] = useState<number | undefined>();
-    const [endPage, setEndPage] = useState<number | undefined>();
+    const [startPage, setStartPage] = useState<string>('');
+    const [endPage, setEndPage] = useState<string>('');
     const [scopeHint, setScopeHint] = useState<string>('');
     
     const [isProcessing, setIsProcessing] = useState(false);
@@ -83,7 +83,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, exam
         }
     }, [processingStatus, isProcessing, onStatusUpdate]);
 
-    const handleStartExtraction = async () => {
+    const handleStartAnalysis = async () => {
         if (!selectedFile || !activeApiKey) return;
         
         setIsProcessing(true);
@@ -91,18 +91,22 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, exam
         setRateLimitError(null);
         
         try {
-            if (startPage || endPage) {
-                setProcessingStatus('Lọc các trang...');
-            } else {
-                setProcessingStatus('Đang xử lý PDF...');
-            }
-            const images = await processPdfToImages(selectedFile, startPage, endPage);
+            setProcessingStatus('Đang xử lý PDF...');
+            const startPageNum = startPage ? parseInt(startPage, 10) : undefined;
+            const endPageNum = endPage ? parseInt(endPage, 10) : undefined;
+            const images = await processPdfToImages(selectedFile, startPageNum, endPageNum);
 
-            setProcessingStatus('AI đang tạo Ma trận...');
+            setProcessingStatus('AI đang phân tích bìa...');
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, images, examConfig, scopeHint);
+            const analysisResult = await analyzeDocumentCover(keysToTry, onSetActiveKey, images[0]);
             
-            onTopicsExtracted(extractedData, images);
+            const generationOptions: GenerationOptions = {
+                startPage: startPageNum,
+                endPage: endPageNum,
+                scopeHint: scopeHint.trim() || undefined
+            };
+            
+            onAnalysisComplete(analysisResult, images, generationOptions);
 
         } catch (e: unknown) {
             const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
@@ -145,9 +149,8 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, exam
     };
     
     const processingSteps = [
-        { name: 'Lọc các trang...', title: 'Lọc các trang từ PDF' },
-        { name: 'Đang xử lý PDF...', title: 'Phân tích tài liệu' },
-        { name: 'AI đang tạo Ma trận...', title: 'AI đang tạo Ma trận chi tiết' },
+        { name: 'Đang xử lý PDF...', title: 'Phân tích tài liệu PDF' },
+        { name: 'AI đang phân tích bìa...', title: 'AI nhận diện thông tin trang bìa' },
     ];
     
     const currentStepIndex = processingSteps.findIndex(s => s.name === processingStatus);
@@ -160,17 +163,14 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, exam
                     <p className="text-slate-500 mt-2">Vui lòng đợi trong giây lát, AI đang đọc tài liệu của bạn.</p>
                     <div className="mt-8 flex justify-center">
                         <div className="inline-flex flex-col items-start space-y-4">
-                           {processingSteps.map((step, index) => {
-                               if (step.name === 'Lọc các trang...' && !(startPage || endPage)) return null;
-                               return (
-                                   <ProcessingStep 
-                                       key={step.title}
-                                       title={step.title}
-                                       isCurrent={index === currentStepIndex}
-                                       isCompleted={index < currentStepIndex}
-                                   />
-                               );
-                           })}
+                           {processingSteps.map((step, index) => (
+                               <ProcessingStep 
+                                   key={step.title}
+                                   title={step.title}
+                                   isCurrent={index === currentStepIndex}
+                                   isCompleted={index < currentStepIndex}
+                               />
+                           ))}
                         </div>
                     </div>
                 </div>
@@ -180,7 +180,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, exam
             return (
                  <RateLimitErrorState 
                     message={rateLimitError}
-                    onRetry={handleStartExtraction}
+                    onRetry={handleStartAnalysis}
                 />
             );
         }
@@ -208,34 +208,26 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, exam
                         </div>
                         
                         <div className="mt-6 pt-6 border-t border-slate-200">
-                            <h4 className="font-semibold text-slate-800">Giới hạn Phạm vi (Tùy chọn)</h4>
-                            <p className="text-sm text-slate-500 mt-1">Chỉ định một chương hoặc khoảng trang để AI tập trung vào.</p>
-                             <div className="mt-3 p-3 bg-primary-50/70 border border-primary-200 rounded-md text-sm text-primary-900 flex items-start space-x-2">
-                                <SparkleIcon className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary-500" />
+                            <h4 className="text-base font-semibold text-slate-800 text-left mb-4">Giới hạn Phạm vi (Tùy chọn)</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
                                 <div>
-                                    <span className="font-semibold">Mẹo tối ưu:</span> Để tiết kiệm chi phí và tăng tốc độ xử lý, hãy chỉ định phạm vi trang hoặc cung cấp gợi ý nội dung để AI tập trung vào phần tài liệu quan trọng nhất.
+                                    <label htmlFor="startPage" className="block text-sm font-medium text-slate-600">Từ trang</label>
+                                    <input type="number" name="startPage" id="startPage" value={startPage} onChange={e => setStartPage(e.target.value)} placeholder="Bỏ trống để bắt đầu từ đầu" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
+                                </div>
+                                <div>
+                                    <label htmlFor="endPage" className="block text-sm font-medium text-slate-600">Đến trang</label>
+                                    <input type="number" name="endPage" id="endPage" value={endPage} onChange={e => setEndPage(e.target.value)} placeholder="Bỏ trống để tới trang cuối" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
                                 </div>
                             </div>
-                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                 <div>
-                                    <label htmlFor="scopeHint" className="block text-sm font-medium text-slate-700">Gợi ý Nội dung (Tên chương)</label>
-                                    <input type="text" id="scopeHint" value={scopeHint} onChange={(e) => setScopeHint(e.target.value)} placeholder="VD: Chương 3: Dòng điện xoay chiều" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div>
-                                        <label htmlFor="startPage" className="block text-sm font-medium text-slate-700">Từ trang</label>
-                                        <input type="number" id="startPage" value={startPage || ''} onChange={(e) => setStartPage(e.target.value ? parseInt(e.target.value) : undefined)} className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
-                                    </div>
-                                     <div>
-                                        <label htmlFor="endPage" className="block text-sm font-medium text-slate-700">Đến trang</label>
-                                        <input type="number" id="endPage" value={endPage || ''} onChange={(e) => setEndPage(e.target.value ? parseInt(e.target.value) : undefined)} className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
-                                    </div>
-                                </div>
+                            <div className="mt-4 text-left">
+                                <label htmlFor="scopeHint" className="block text-sm font-medium text-slate-600">Gợi ý nội dung (tùy chọn)</label>
+                                <input type="text" name="scopeHint" id="scopeHint" value={scopeHint} onChange={e => setScopeHint(e.target.value)} placeholder="VD: Chương 3, Thời nhà Lý, Sóng điện từ..." className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
+                                <p className="mt-1 text-xs text-slate-500">Cung cấp gợi ý để AI tập trung vào nội dung cụ thể.</p>
                             </div>
                         </div>
 
-                        <div className="mt-6 text-center">
-                            <button onClick={handleStartExtraction} className="inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500" >
+                         <div className="mt-6 pt-6 border-t border-slate-200 text-center">
+                            <button onClick={handleStartAnalysis} className="inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500" >
                                 <SparkleIcon className="w-5 h-5 mr-2" />
                                 Bắt đầu Phân tích
                             </button>

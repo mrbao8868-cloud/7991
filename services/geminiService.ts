@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { Topic, QuestionType, CognitiveLevel, Question, GeneratedMatrixResponse, GeneratedTopicConfig, TopicConfig, RateLimitError, questionKeys, SpecTopic, ObjectiveSpec, ApiKeyRequiredError, ExamConfig } from '../types';
+import { Topic, QuestionType, CognitiveLevel, Question, GeneratedMatrixResponse, GeneratedTopicConfig, TopicConfig, RateLimitError, questionKeys, SpecTopic, ObjectiveSpec, ApiKeyRequiredError, ExamConfig, InitialAnalysisResult } from '../types';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -93,6 +93,21 @@ export async function withRetry<T>(
     throw new ApiKeyRequiredError(`Tất cả ${keysToTry.length} Khóa API đã cung cấp đều không hợp lệ hoặc đã hết hạn ngạch. Vui lòng thêm một khóa API mới đang hoạt động.`);
 }
 
+const analysisResponseSchema = {
+    type: Type.OBJECT,
+    properties: {
+        subjects: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            description: "An array of subject names found on the cover page. E.g., ['Lịch sử', 'Địa lý']. If only one subject, return an array with one element."
+        },
+        examTitle: { type: Type.STRING, description: "A suggested exam title based on the document's content. E.g., 'KIỂM TRA GIỮA HỌC KỲ I'" },
+        schoolName: { type: Type.STRING, description: "The name of the school found on the page. E.g., 'SỞ GD&ĐT LÀO CAI'" },
+        departmentName: { type: Type.STRING, description: "The name of the department or team. E.g., 'TRƯỜNG THPT SỐ 3 BẢO THẮNG'" }
+    },
+    required: ['subjects', 'examTitle', 'schoolName', 'departmentName']
+};
+
 const questionSchema = {
   type: Type.OBJECT,
   properties: {
@@ -115,12 +130,13 @@ const generatedTopicConfigSchema = {
     properties: {
         chapter: { type: Type.STRING },
         name: { type: Type.STRING },
+        subject: { type: Type.STRING },
         mc_knowledge: { type: Type.NUMBER }, mc_comprehension: { type: Type.NUMBER }, mc_application: { type: Type.NUMBER },
         tf_knowledge: { type: Type.NUMBER }, tf_comprehension: { type: Type.NUMBER }, tf_application: { type: Type.NUMBER },
         sa_knowledge: { type: Type.NUMBER }, sa_comprehension: { type: Type.NUMBER }, sa_application: { type: Type.NUMBER },
         essay_knowledge: { type: Type.NUMBER }, essay_comprehension: { type: Type.NUMBER }, essay_application: { type: Type.NUMBER },
     },
-    required: ['chapter', 'name', ...questionKeys]
+    required: ['chapter', 'name', 'subject', ...questionKeys]
 };
 
 const matrixResponseSchema = {
@@ -169,6 +185,51 @@ const specTopicSchema = {
     required: ['id', 'chapter', 'name', 'objectives']
 };
 
+export const analyzeDocumentCover = async (
+    keysToTry: string[],
+    onKeyRotated: (newKey: string) => void,
+    coverImage: string
+): Promise<InitialAnalysisResult> => {
+     const imagePart = {
+        inlineData: {
+            mimeType: 'image/jpeg',
+            data: coverImage,
+        },
+    };
+
+    const prompt = `
+        You are an AI assistant for Vietnamese educators. Analyze the provided image, which is the cover page of an educational document.
+        Your task is to extract the following information and return it as a single, valid JSON object:
+        1.  'subjects': Identify all distinct subjects mentioned. If it's a combined document (e.g., "Lịch sử và Địa lí"), return an array like ["Lịch sử", "Địa lí"]. If only one subject is found, return an array with that single subject.
+        2.  'examTitle': Suggest a suitable exam title. It is usually written in uppercase at the top. For example, 'KIỂM TRA GIỮA HỌC KỲ I'.
+        3.  'schoolName': Identify the name of the school or the superior educational department. E.g., 'SỞ GD&ĐT LÀO CAI'.
+        4.  'departmentName': Identify the specific school name or department name if available. E.g., 'TRƯỜNG THPT SỐ 3 BẢO THẮNG'. If not present, you can return the same as schoolName.
+        
+        Extract the information as accurately as possible. If a piece of information is not present, return an empty string for that field.
+    `;
+
+     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
+        return ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: prompt }, imagePart] },
+            config: {
+                systemInstruction: 'You are an expert AI assistant that extracts key information from Vietnamese educational documents and provides it in a structured JSON format.',
+                responseMimeType: 'application/json',
+                responseSchema: analysisResponseSchema
+            }
+        });
+    }, "Phân tích bìa tài liệu");
+
+    const jsonText = response.text.trim();
+    const parsed = JSON.parse(jsonText);
+    
+    // Basic validation
+    if (parsed && Array.isArray(parsed.subjects) && typeof parsed.examTitle === 'string') {
+        return parsed;
+    }
+    throw new Error("Cấu trúc phản hồi từ AI không hợp lệ khi phân tích bìa.");
+};
+
 
 export const generateMatrixFromImages = async (
     keysToTry: string[],
@@ -187,9 +248,14 @@ export const generateMatrixFromImages = async (
     const scopeInstruction = scopeHint 
         ? `The user has provided a hint to focus EXCLUSIVELY on content related to: "${scopeHint}". You MUST ignore any other topics, even if they appear in the images.` 
         : '';
+        
+    const multiSubjectInstruction = config.isMultiSubject && config.subjectAllocations
+        ? `This is a multi-subject exam. You must distribute the questions and points according to the following allocation: ${config.subjectAllocations.map(s => `${s.subjectName}: ${s.percentage}%`).join(', ')}. When you identify a topic, you MUST assign it to the correct subject in the 'subject' field.`
+        : `This is a single-subject exam for ${config.subjectsSummary}. All topics should be assigned to this subject.`;
     
-    const totalTnkqQuestions = Math.round(config.mcPoints / 0.25);
-    const updatedMcPoints = totalTnkqQuestions * 0.25;
+    const totalTnkqCount = config.mcCount + config.tfCount + config.saCount;
+    const tnkqPointPerQuestion = totalTnkqCount > 0 ? config.tnkqPoints / totalTnkqCount : 0;
+    const essayPointPerQuestion = config.essayCount > 0 ? config.essayPoints / config.essayCount : 0;
 
     const prompt = `
         You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation.
@@ -199,27 +265,33 @@ export const generateMatrixFromImages = async (
         ${scopeInstruction}
 
         High-Level Exam Configuration:
-        - Total points for Multiple Choice part (TNKQ): ${updatedMcPoints.toFixed(2)} (which corresponds to exactly ${totalTnkqQuestions} questions, as each is worth 0.25 points).
-        - Total points for Essay part (Tự luận): ${config.essayPoints}
+        - Exam Duration: ${config.duration}. This is a critical factor for you to consider when assessing the complexity and length of the topics.
+        - Exam Difficulty Guideline: ${config.difficulty}. Use this to inform your question distribution. For 'Dễ' (Easy), prioritize 'Biết' (Knowledge) questions. For 'Trung bình' (Medium), ensure a balanced distribution. For 'Trung bình khá' (Medium-Hard), increase the proportion of 'Vận dụng' (Application) questions. This is a general guideline to be used in conjunction with the percentages below.
+        - ${multiSubjectInstruction}
+        - Total points for Objective Questions (TNKQ: 'mc', 'tf', 'sa'): ${config.tnkqPoints}.
+        - Total points for Essay Questions ('essay'): ${config.essayPoints}.
+        - Total Score: ${config.tnkqPoints + config.essayPoints} points.
+        - Total number of Multiple Choice ('mc') questions: ${config.mcCount}.
+        - Total number of True/False ('tf') questions: ${config.tfCount}.
+        - Total number of Short Answer ('sa') questions: ${config.saCount}.
+        - Total number of Essay ('essay') questions: ${config.essayCount}.
         - Cognitive Level Distribution: ${config.knowledgePct}% for Knowledge (Biết), ${config.comprehensionPct}% for Comprehension (Hiểu), ${config.applicationPct}% for Application (Vận dụng).
 
         Your required tasks are:
         1.  Identify a suitable overall title for the exam.
         2.  Identify the main chapters. For each chapter, extract the titles of ALL individual lessons or large sections within it. Each of these lesson/section titles will become a "Nội dung/đơn vị kiến thức".
         3.  CRITICAL RULE: You MUST identify and list EVERY single lesson found within the document for the relevant chapters. Do not skip or combine lessons. The names for chapters and lesson titles MUST be extracted as verbatim as possible from the document.
-        4.  Distribute the questions across the extracted topics, different question types (Multiple Choice - 'mc', True/False - 'tf', Short Answer - 'sa', Essay - 'essay'), and cognitive levels ('knowledge', 'comprehension', 'application').
-        5.  CRITICAL INSTRUCTION ON DIVERSITY: For the TNKQ part, you MUST create a diverse mix of question types (mc, tf, sa). Do not use only Multiple Choice.
+        4.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
+        5.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
         
         CRITICAL CONSTRAINTS (You MUST follow these precisely):
         6.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
-        7.  The TOTAL number of TNKQ questions (sum of all 'mc', 'tf', and 'sa' questions across all topics and levels) MUST be EXACTLY ${totalTnkqQuestions}.
-        8.  The distribution of these ${totalTnkqQuestions} TNKQ questions across the cognitive levels should be as close as possible to the specified percentages:
-            - Approximately ${config.knowledgePct}% for Knowledge.
-            - Approximately ${config.comprehensionPct}% for Comprehension.
-            - Approximately ${config.applicationPct}% for Application.
-            You must perform the rounding and allocation to ensure the final counts are integers and sum up correctly to the total.
-        9.  For the Essay part, the TOTAL points for all essay questions combined MUST be EXACTLY ${config.essayPoints}. You need to decide the number of essay questions and their individual point values. The distribution of these points across cognitive levels should also roughly follow the specified percentages.
-        10. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields are present for each topic, even if the value is 0.
+        7.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
+        8.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
+        9.  The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
+        10. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
+        11. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
+        12. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
     `;
     
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {

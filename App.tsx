@@ -1,18 +1,25 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { ExamConfig } from './types';
+import { ExamConfig, InitialAnalysisResult, GenerationOptions } from './types';
 import { BalDigitechLogo, LockClosedIcon, SparkleIcon } from './components/icons';
 import ApiKeyManagerModal from './components/ApiKeyManagerModal';
 import ConfigurationScreen from './components/ConfigurationScreen';
 import ApiKeyPromptScreen from './components/ApiKeyPromptScreen';
 import ExamWorkspace from './components/ExamWorkspace';
+import UploadScreen from './components/UploadScreen';
 
+type AppStage = 'upload' | 'configure' | 'workspace';
 
 function App() {
     // App readiness and flow state
     const [isAppReady, setIsAppReady] = useState(false);
-    const [appState, setAppState] = useState<'configuring' | 'workspace'>('configuring');
+    const [appStage, setAppStage] = useState<AppStage>('upload');
     const [examConfig, setExamConfig] = useState<ExamConfig | null>(null);
+    const [analysisResult, setAnalysisResult] = useState<InitialAnalysisResult | null>(null);
+    const [documentImages, setDocumentImages] = useState<string[]>([]);
+    const [generationOptions, setGenerationOptions] = useState<GenerationOptions | null>(null);
+
 
     // State for API Key Management
     const [apiKeys, setApiKeys] = useState<string[]>([]);
@@ -33,12 +40,12 @@ function App() {
             
             if (storedActiveKey && keys.includes(storedActiveKey)) {
                 setActiveApiKey(storedActiveKey);
-                setIsAppReady(true); // Key found, app is ready
+                setIsAppReady(true);
             } else if (keys.length > 0) {
                 const newActive = keys[0];
                 setActiveApiKey(newActive);
                 localStorage.setItem('activeApiKey', newActive);
-                setIsAppReady(true); // A key was found, app is ready
+                setIsAppReady(true);
             } else {
                 setIsAppReady(false);
             }
@@ -53,13 +60,21 @@ function App() {
     useEffect(() => {
         if (!isAppReady) {
             setStatusMessage('Vui lòng thêm và chọn một API Key để bắt đầu.');
-        } else if (appState === 'configuring') {
-            setStatusMessage('Sẵn sàng cấu hình ma trận. Vui lòng nhập thông tin chi tiết.');
-        } else { // appState === 'workspace'
-            // Set a default message, child components will provide more specific updates
-            setStatusMessage('Sẵn sàng tạo đề thi. Tải tài liệu lên để bắt đầu.');
+        } else {
+            switch(appStage) {
+                case 'upload':
+                    setStatusMessage('Sẵn sàng phân tích tài liệu. Vui lòng tải lên tệp PDF.');
+                    break;
+                case 'configure':
+                    setStatusMessage('AI đã phân tích tài liệu. Vui lòng kiểm tra và xác nhận cấu hình ma trận.');
+                    break;
+                case 'workspace':
+                    // Workspace component will provide more specific updates
+                    setStatusMessage('Đang tạo ma trận từ tài liệu và cấu hình...');
+                    break;
+            }
         }
-    }, [isAppReady, appState]);
+    }, [isAppReady, appStage]);
     
     const handleAddApiKey = (key: string) => {
         if (key && !apiKeys.includes(key)) {
@@ -94,24 +109,34 @@ function App() {
         localStorage.setItem('activeApiKey', key);
         setApiKeyError(null);
         if(closeModal) setIsApiModalOpen(false);
-        setIsAppReady(true); // Setting a key makes the app ready
+        setIsAppReady(true);
     };
 
     const handleApiKeyError = (message?: string) => {
         const errorMsg = message || 'Khóa API đang hoạt động không hợp lệ. Vui lòng chọn một khóa khác hoặc thêm một khóa mới.';
         setApiKeyError(errorMsg);
-        setStatusMessage(`Lỗi API Key: ${errorMsg}`); // Update status bar on API key error
+        setStatusMessage(`Lỗi API Key: ${errorMsg}`);
         setIsApiModalOpen(true);
+    };
+    
+    const handleAnalysisComplete = (result: InitialAnalysisResult, images: string[], options: GenerationOptions) => {
+        setAnalysisResult(result);
+        setDocumentImages(images);
+        setGenerationOptions(options);
+        setAppStage('configure');
     };
 
     const handleConfigSubmit = (config: ExamConfig) => {
         setExamConfig(config);
-        setAppState('workspace');
+        setAppStage('workspace');
     };
     
     const resetState = () => {
         setExamConfig(null);
-        setAppState('configuring');
+        setAnalysisResult(null);
+        setDocumentImages([]);
+        setGenerationOptions(null);
+        setAppStage('upload');
     };
 
     const renderContent = () => {
@@ -119,22 +144,54 @@ function App() {
             return <ApiKeyPromptScreen onOpenModal={() => setIsApiModalOpen(true)} />;
         }
 
-        if (appState === 'configuring' || !examConfig) {
-            return <ConfigurationScreen onConfigSubmit={handleConfigSubmit} />;
+        switch (appStage) {
+            case 'upload':
+                return (
+                     <div className="flex-grow flex items-center justify-center p-4">
+                        <UploadScreen
+                            apiKeys={apiKeys}
+                            activeApiKey={activeApiKey}
+                            onAnalysisComplete={handleAnalysisComplete}
+                            onApiKeyError={handleApiKeyError}
+                            onSetActiveKey={handleSetActiveApiKey}
+                            onStatusUpdate={setStatusMessage}
+                        />
+                    </div>
+                );
+            case 'configure':
+                if (!analysisResult) {
+                    // Should not happen, but as a fallback
+                    resetState();
+                    return null;
+                }
+                return (
+                    <ConfigurationScreen
+                        analysisResult={analysisResult}
+                        onConfigSubmit={handleConfigSubmit}
+                        onBack={resetState}
+                    />
+                );
+            case 'workspace':
+                if (!examConfig || documentImages.length === 0) {
+                     // Should not happen, but as a fallback
+                    resetState();
+                    return null;
+                }
+                return (
+                    <ExamWorkspace
+                        examConfig={examConfig}
+                        documentImages={documentImages}
+                        generationOptions={generationOptions}
+                        apiKeys={apiKeys}
+                        activeApiKey={activeApiKey}
+                        onBack={resetState}
+                        onApiKeyError={handleApiKeyError}
+                        onSetActiveKey={handleSetActiveApiKey}
+                        onOpenApiModal={() => setIsApiModalOpen(true)}
+                        onStatusUpdate={setStatusMessage}
+                    />
+                );
         }
-
-        return (
-            <ExamWorkspace
-                examConfig={examConfig}
-                apiKeys={apiKeys}
-                activeApiKey={activeApiKey}
-                onBack={resetState}
-                onApiKeyError={handleApiKeyError}
-                onSetActiveKey={handleSetActiveApiKey}
-                onOpenApiModal={() => setIsApiModalOpen(true)}
-                onStatusUpdate={setStatusMessage}
-            />
-        );
     };
 
     return (
