@@ -13,9 +13,6 @@
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-n/mZmB2bOPDsjUYHnLrUECALQbOdEzuxpIWErMLcrL6RcEImkkYdgLImO1iAJAoM" crossorigin="anonymous">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7FO8CEfgGvoM9qCtawZgYhVSD2MBM3rQoHTebgdpR+IuTE2r0I9Pnsaxrfqt8I0w" crossorigin="anonymous"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0YVjaDtb/GpZv7MmrNocUread+tbwxozydlvUY4tIUjOMvsatWSxSK66X" crossorigin="anonymous"></script>
-
-    <script src="https://unpkg.com/html-to-docx@1.8.0/dist/html-to-docx.js"></script>
 
     <style>
       body {
@@ -23,7 +20,8 @@
       }
       @media print {
         @page {
-          size: A4 landscape;
+          size: A4 portrait;
+          margin: 2cm;
         }
         body * {
           visibility: hidden;

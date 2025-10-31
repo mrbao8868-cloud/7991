@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { KeyIcon, ExclamationTriangleIcon, TrashIcon } from './icons';
 
@@ -142,12 +141,12 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                 </div>
                 <div className="bg-slate-50 px-6 py-4 flex justify-between items-center rounded-b-lg">
                     <a 
-                        href="https://aistudio.google.com/app/apikey" 
+                        href="https://drive.google.com/file/d/1dz8gHGlcnd_gpVf9f2zAK4CrqZcPyLmP/view?usp=sharing" 
                         target="_blank" 
                         rel="noopener noreferrer" 
                         className="text-sm font-medium text-primary-700 hover:underline"
                     >
-                        Lấy Khóa API từ AI Studio
+                        Video hướng dẫn lấy API
                     </a>
                     <button
                         type="button"

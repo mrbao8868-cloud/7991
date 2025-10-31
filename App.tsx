@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { ExamConfig, InitialAnalysisResult, GenerationOptions } from './types';
 import { BalDigitechLogo, LockClosedIcon, SparkleIcon } from './components/icons';

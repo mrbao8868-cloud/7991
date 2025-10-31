@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { KeyIcon, LockClosedIcon } from './icons';
 

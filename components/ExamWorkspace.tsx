@@ -1,13 +1,10 @@
-
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec, GenerationOptions } from '../types';
-import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, SparkleIcon, KeyIcon } from './icons';
+import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, SparkleIcon, KeyIcon, ChevronDownIcon } from './icons';
 import { generateAllQuestionsForTopics, generateSpecification, generateMatrixFromImages } from '../services/geminiService';
 import MathRenderer from './MathRenderer';
 
-
-declare const htmlToDocx: any;
+declare const renderMathInElement: any;
 
 interface ExamWorkspaceProps {
     examConfig: ExamConfig;
@@ -128,29 +125,14 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     const [matrixError, setMatrixError] = useState<string | null>(null);
     const [specError, setSpecError] = useState<string | null>(null);
     const [questionsError, setQuestionsError] = useState<string | null>(null);
-    
-    // State for DOCX export
-    const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
-    const [isDocxScriptReady, setIsDocxScriptReady] = useState(false);
+
+    const previewContainerRef = useRef<HTMLDivElement>(null);
+    const printableAreaRef = useRef<HTMLDivElement>(null);
+    const allQuestions = topics.flatMap(t => t.questions || []);
 
     // Auto-generate matrix on component mount
     useEffect(() => {
         handleGenerateMatrix();
-    }, []);
-
-
-    useEffect(() => {
-        if (typeof htmlToDocx === 'function') {
-            setIsDocxScriptReady(true);
-            return;
-        }
-        const intervalId = setInterval(() => {
-            if (typeof htmlToDocx === 'function') {
-                setIsDocxScriptReady(true);
-                clearInterval(intervalId);
-            }
-        }, 200);
-        return () => clearInterval(intervalId);
     }, []);
 
     useEffect(() => {
@@ -188,7 +170,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             case 'questions':
                 const questionsDone = topics.every(t => t.generationStatus === 'completed');
                 if (questionsDone) {
-                    onStatusUpdate('Hoàn tất! Xem lại đề thi và đáp án, sau đó tải về dưới dạng .docx.');
+                    onStatusUpdate('Hoàn tất! Xem lại đề thi và đáp án, sau đó có thể tải về dưới dạng .doc.');
                 } else if (topics.some(t => t.generationStatus === 'failed')) {
                     onStatusUpdate('Một số chủ đề tạo câu hỏi bị lỗi. Vui lòng thử lại các chủ đề bị lỗi.');
                 } else if (topics.some(t => t.generationStatus === 'pending')) {
@@ -313,38 +295,150 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         }
     };
 
-    const handleDocxDownload = async () => {
-        if (isDownloadingDocx || !isDocxScriptReady) return;
-        setIsDownloadingDocx(true);
-        try {
-            const printableArea = document.getElementById('printable-area');
-            if (!printableArea) throw new Error("Printable area not found.");
-            
-            const katexCssResponse = await fetch("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css");
-            if (!katexCssResponse.ok) throw new Error("Could not load KaTeX CSS.");
-            let katexCss = await katexCssResponse.text();
-            katexCss = katexCss.replace(/url\(fonts\//g, `url(https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/fonts/`);
+    const handleDownloadXls = (tableId: string, filename: string) => {
+        const table = document.getElementById(tableId);
+        if (!table) return;
 
-            const docxStyles = `<style>${katexCss} body { font-family: 'Times New Roman', serif; font-size: 11pt; line-height: 1.5; } h2, h3 { font-weight: bold; text-align: center; margin-bottom: 1rem; } .exam-question { margin-bottom: 1em; page-break-inside: avoid; } .exam-question-options { padding-left: 2em; } .exam-question-options-table { width: 100%; border: none; margin-top: 0.5em; font-size: 11pt; } .exam-question-options-table td { width: 50%; vertical-align: top; padding: 0 1em 0 2em; } table { border-collapse: collapse; width: 100%; margin-bottom: 1rem; page-break-inside: avoid; font-size: 10pt; } th, td { border: 1px solid #999; padding: 5px; text-align: center; vertical-align: middle; } thead th { font-weight: bold; } .break-before-page { page-break-before: always; } .katex { font-size: 1.05em !important; }</style>`;
-            const contentHtml = printableArea.innerHTML;
-            const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8">${docxStyles}</head><body>${contentHtml}</body></html>`;
+        const template = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head>
+                <!--[if gte mso 9]>
+                <xml>
+                    <x:ExcelWorkbook>
+                        <x:ExcelWorksheets>
+                            <x:ExcelWorksheet>
+                                <x:Name>Sheet1</x:Name>
+                                <x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+                            </x:ExcelWorksheet>
+                        </x:ExcelWorksheets>
+                    </x:ExcelWorkbook>
+                </xml>
+                <![endif]-->
+                <meta http-equiv="content-type" content="text/plain; charset=UTF-8"/>
+                <style>
+                    table, th, td {
+                        border: 1px solid black;
+                        border-collapse: collapse;
+                    }
+                    th, td { padding: 5px; text-align: center; vertical-align: middle; }
+                </style>
+            </head>
+            <body>
+                ${table.outerHTML.replace(/<br\s*\/?>/gi, ' ')}
+            </body>
+            </html>
+        `;
 
-            const fileBuffer = await htmlToDocx(fullHtml, null, { orientation: 'portrait', margins: { top: 720, right: 720, bottom: 720, left: 720 } });
-            const blob = new Blob([fileBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = `${examConfig.subjectsSummary.replace(/ /g, '_')}_${examConfig.examTime.replace(/ /g, '_') || 'De-kiem-tra'}.docx`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        } catch (error: unknown) {
-            console.error("Error generating .docx file:", error);
-            alert("Đã xảy ra lỗi khi tạo tệp .docx.");
-        } finally {
-            setIsDownloadingDocx(false);
-        }
+        const blob = new Blob([template], { type: 'application/vnd.ms-excel' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
     
+    const handleDownloadDocx = async (contentElementId: string, filename: string) => {
+        const contentElement = document.getElementById(contentElementId);
+        if (!contentElement) return;
+
+        // 1. Fetch KaTeX CSS to inline it.
+        let katexCss = '';
+        try {
+            const response = await fetch('https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css');
+            if (response.ok) {
+                katexCss = await response.text();
+            } else {
+                console.warn('Could not fetch KaTeX CSS for DOCX export.');
+            }
+        } catch (error) {
+            console.error('Error fetching KaTeX CSS:', error);
+        }
+
+        // 2. The CSS file uses relative paths for fonts, e.g., url(fonts/KaTeX_Main-Regular.woff2).
+        //    We need to replace these with absolute URLs so Word can download them.
+        const katexCssWithAbsoluteFontPaths = katexCss.replace(
+            /url\(fonts\//g, 
+            'url(https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/fonts/'
+        );
+
+        const template = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+            <head>
+                <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+                <title>${examTitle || 'Đề thi'}</title>
+                <style>
+                    /* Inlined and corrected KaTeX CSS */
+                    ${katexCssWithAbsoluteFontPaths}
+
+                    /* Document-specific styles */
+                    @page WordSection1 {
+                        size: 21cm 29.7cm; /* A4 portrait */
+                        margin: 2cm 2cm 2cm 2cm;
+                        mso-header-margin: .5in;
+                        mso-footer-margin: .5in;
+                        mso-paper-source: 0;
+                    }
+                    div.WordSection1 {
+                        page: WordSection1;
+                    }
+                    body {
+                        font-family: 'Times New Roman', serif;
+                        font-size: 13pt;
+                        line-height: 1.5;
+                    }
+                    table {
+                        border-collapse: collapse;
+                        width: 100%;
+                    }
+                    td, th {
+                        padding: 4px;
+                    }
+                    .exam-question-options-table { 
+                        width: 100%; 
+                        border: none;
+                    }
+                    .exam-question-options-table td { 
+                        width: 50%; 
+                        vertical-align: top; 
+                        padding: 4px 0; 
+                        border: none;
+                    }
+                    .break-before-page {
+                        page-break-before: always;
+                    }
+                    .break-inside-avoid {
+                        page-break-inside: avoid;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="WordSection1">
+                    ${contentElement.innerHTML}
+                </div>
+            </body>
+            </html>
+        `;
+
+        // Use the older .doc format which is more lenient with HTML content.
+        // Modern Word will open this in compatibility mode but it's more reliable than the .docx HTML hack.
+        const blob = new Blob([template], { type: 'application/msword' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Ensure the filename ends with .doc
+        const docFilename = filename.endsWith('.doc') ? filename : filename.replace(/\.docx$/, '.doc') || `${filename}.doc`;
+        link.download = docFilename;
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     const renderMatrix = () => {
         const tnkqPointsFromConfig = examConfig.tnkqPoints;
         const essayPointsFromConfig = examConfig.essayPoints;
@@ -397,7 +491,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                 <h2 className="text-xl font-bold text-center mb-1 uppercase">A. MA TRẬN ĐỀ KIỂM TRA</h2>
                 <h3 className="text-xl font-bold text-center mb-4 uppercase">{examConfig.examTime}</h3>
                 <div className="overflow-x-auto">
-                    <table className="w-full border-collapse border border-slate-400 text-sm">
+                    <table id="matrix-table" className="w-full border-collapse border border-slate-400 text-sm">
                         <thead className="align-middle text-center font-semibold bg-slate-50">
                              <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-2 w-[3%]">TT</th>
@@ -571,7 +665,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                 <h2 className="text-xl font-bold text-center mb-1 uppercase">B. BẢN ĐẶC TẢ ĐỀ KIỂM TRA</h2>
                 <h3 className="text-xl font-bold text-center mb-4 uppercase">{examConfig.examTime}</h3>
                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse border border-slate-400 text-sm">
+                    <table id="spec-table" className="w-full border-collapse border border-slate-400 text-sm">
                         <thead className="align-middle text-center font-semibold bg-slate-50">
                              <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-2 w-[3%]">TT</th>
@@ -650,10 +744,8 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     const renderExamAndAnswers = () => {
         const tnkqPoints = examConfig.tnkqPoints;
         const essayPoints = examConfig.essayPoints;
-
-        const allQuestions: Question[] = topics.flatMap(t => 
-            (t.generationStatus === 'completed' && Array.isArray(t.questions)) ? t.questions : []
-        );
+        
+        const allQuestions = topics.flatMap(t => t.questions || []);
 
         const tnkqQuestions = allQuestions.filter(q => 
             q.type === QuestionType.MULTIPLE_CHOICE || 
@@ -746,8 +838,8 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                 )}
             </div>
         );
-
-        const allAnswerQuestions: Question[] = topics.flatMap(t => (t.generationStatus === 'completed' && Array.isArray(t.questions)) ? t.questions : []);
+        
+        const allAnswerQuestions = topics.flatMap(t => t.questions || []);
         const mcQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.MULTIPLE_CHOICE);
         const tfQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.TRUE_FALSE);
         const saQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.SHORT_ANSWER);
@@ -819,12 +911,20 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                      <div className="mb-8">
                         <p className="font-bold mb-2">PHẦN TỰ LUẬN</p>
                          <div className="space-y-4">
-                            {essayQuestions.map((q, index) => (
+                            {essayQuestions.map((q, index) => {
+                                const formattedAnswer = q.answer
+                                    .trim()
+                                    .split('- ')
+                                    .filter(part => part.trim())
+                                    .map(part => `- ${part.trim()}`)
+                                    .join('<br />');
+                                return (
                                  <div key={q.id}>
                                     <p><b>Câu {mcQuestions.length + tfQuestions.length + saQuestions.length + index + 1}:</b></p>
-                                    <div className="pl-4"><MathRenderer content={q.answer} /></div>
+                                    <div className="pl-4"><MathRenderer content={formattedAnswer} /></div>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 )}
@@ -833,12 +933,16 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
 
         return (
             <div>
-                {examPart}
-                <div className="text-center font-bold my-10">------- HẾT -------</div>
+                <div id="exam-paper-content">
+                    {examPart}
+                    <div className="text-center font-bold my-10">------- HẾT -------</div>
+                </div>
                 <div className="break-before-page"></div>
-                {answerPart}
+                <div id="answer-key-content">
+                    {answerPart}
+                </div>
             </div>
-        )
+        );
     };
     
     const renderTabContent = () => {
@@ -854,9 +958,37 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                         onRetry={handleGenerateMatrix}
                     />;
                 }
-                return renderMatrix();
+                return (
+                    <>
+                        {renderMatrix()}
+                        <div className="mt-8 pt-6 border-t flex justify-end no-print">
+                            <button
+                                onClick={() => handleDownloadXls('matrix-table', 'Ma_tran_de_thi.xlsx')}
+                                className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700"
+                            >
+                                <DocumentArrowDownIcon className="w-5 h-5"/>
+                                Tải Ma trận (.xlsx)
+                            </button>
+                        </div>
+                    </>
+                );
             case 'spec':
-                if (specification) return renderSpecification();
+                if (specification) {
+                    return (
+                        <>
+                            {renderSpecification()}
+                            <div className="mt-8 pt-6 border-t flex justify-end no-print">
+                                <button
+                                    onClick={() => handleDownloadXls('spec-table', 'Ban_dac_ta.xlsx')}
+                                    className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700"
+                                >
+                                    <DocumentArrowDownIcon className="w-5 h-5"/>
+                                    Tải Đặc tả (.xlsx)
+                                </button>
+                            </div>
+                        </>
+                    );
+                }
                 return <GenerationPlaceholder 
                     icon={<DocumentTextIcon className="w-8 h-8 text-slate-500" />}
                     title={isGeneratingSpec ? "AI đang tạo Bản đặc tả..." : "Sẵn sàng tạo Bản đặc tả"}
@@ -871,7 +1003,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                 const allGeneratedQuestions = topics.flatMap(t => t.questions || []);
 
                 const hasStartedGeneration = topics.some(t => t.generationStatus !== 'pending');
-                const questionsDone = topics.every(t => t.generationStatus === 'completed');
+                const questionsDone = topics.length > 0 && topics.every(t => t.generationStatus === 'completed');
 
                 if (!hasStartedGeneration && !isGeneratingQuestions) {
                      return <GenerationPlaceholder 
@@ -932,10 +1064,22 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                             </div>
                         )}
                         
-                        <div className="mt-8">
-                             <div className="p-6 bg-slate-50/70 rounded-lg border">
+                        {questionsDone && (
+                             <div className="mt-8 border-t pt-6 flex justify-end">
+                                <button
+                                    onClick={() => handleDownloadDocx('exam-preview-content', 'De_thi_va_dap_an.docx')}
+                                    className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700"
+                                >
+                                    <DocumentArrowDownIcon className="w-5 h-5"/>
+                                    Tải Đề & Đáp án (.doc)
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="mt-6">
+                             <div id="exam-preview-content" className="p-6 bg-slate-50/70 rounded-lg border">
                                 {allGeneratedQuestions.length > 0 ? (
-                                    <div className="preview-container" style={{ fontFamily: "'Times New Roman', serif", fontSize: '13pt', lineHeight: 1.5 }}>
+                                    <div ref={previewContainerRef} className="preview-container" style={{ fontFamily: "'Times New Roman', serif", fontSize: '13pt', lineHeight: 1.5 }}>
                                         {renderExamAndAnswers()}
                                     </div>
                                 ) : (
@@ -988,47 +1132,54 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     matrixDone={matrixDone}
                     specDone={!!specification}
                     questionsDone={questionsDone}
-                    onTabChange={(tab) => setActiveTab(tab as WorkspaceTab)}
-                    canAccessSpec={topics.length > 0}
+                    onTabChange={setActiveTab}
+                    canAccessSpec={matrixDone}
                     canAccessQuestions={!!specification}
                 />
             </div>
             
-            <div className="bg-white rounded-xl shadow-lg border border-slate-200 w-full no-print mt-4">
-                <div className="p-6 sm:p-8">
-                    {renderTabContent()}
+             <div className="mt-8 bg-white p-6 sm:p-8 rounded-xl shadow-lg border border-slate-200">
+                {renderTabContent()}
+             </div>
+
+             <div className="mt-6 flex justify-between items-center no-print">
+                <div>
+                     {activeTab !== 'matrix' && (
+                        <button onClick={() => setActiveTab(activeTab === 'spec' ? 'matrix' : 'spec')} className="px-6 py-2 border border-slate-300 text-sm font-medium rounded-full shadow-sm text-slate-700 bg-white hover:bg-slate-50">
+                            Quay lại
+                        </button>
+                     )}
                 </div>
-                 <div className="p-4 bg-slate-50 border-t border-slate-200 rounded-b-xl flex flex-col sm:flex-row justify-end items-center gap-4">
-                     <div className="flex items-center space-x-3">
-                         {questionsDone && (
-                             <button
-                                onClick={handleDocxDownload}
-                                disabled={isDownloadingDocx || !isDocxScriptReady}
-                                className="inline-flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-sm font-medium rounded-full shadow-sm text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {isDownloadingDocx ? <SmallSpinner className="text-slate-600 w-4 h-4"/> : <DocumentArrowDownIcon className="w-5 h-5"/>}
-                                {isDocxScriptReady ? (isDownloadingDocx ? 'Tải .docx' : 'Tải .docx') : 'Đang tải...'}
-                            </button>
-                         )}
-                         {activeTab !== 'questions' && (
-                             <button onClick={handleNextTab} disabled={(activeTab === 'matrix' && !matrixDone) || (activeTab === 'spec' && !specification)} className="px-6 py-2 border border-transparent text-sm font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 disabled:bg-slate-400">
-                                Tiếp tục
-                             </button>
-                         )}
+                 <div>
+                    {activeTab !== 'questions' && (
+                        <button
+                            onClick={handleNextTab}
+                            disabled={activeTab === 'matrix' ? !matrixDone : !specification}
+                            className="inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 disabled:bg-slate-400 disabled:cursor-not-allowed"
+                        >
+                           Tiếp tục
+                        </button>
+                    )}
+                 </div>
+             </div>
+        </div>
+
+        {/* This div is for printing content. It's hidden in the normal view. */}
+        <div id="printable-area" ref={printableAreaRef} className="hidden print:block">
+            <div className="p-4">
+                {renderMatrix()}
+                <div className="break-before-page"></div>
+                {renderSpecification()}
+                <div className="break-before-page"></div>
+                {allQuestions.length > 0 && (
+                     <div className="preview-container" style={{ fontFamily: "'Times New Roman', serif", fontSize: '13pt', lineHeight: 1.5 }}>
+                        {renderExamAndAnswers()}
                     </div>
-                </div>
-            </div>
-             <div id="printable-area" className="hidden print:block bg-white p-12">
-                 {renderMatrix()}
-                 {specification && <><div className="break-before-page"></div>{renderSpecification()}</>}
-                 {questionsDone && <>
-                    <div className="break-before-page"></div>
-                    {renderExamAndAnswers()}
-                 </>}
+                )}
             </div>
         </div>
         </>
-    )
+    );
 };
 
 export default ExamWorkspace;

@@ -245,10 +245,10 @@ export const generateMatrixFromImages = async (
         },
     }));
 
-    const scopeInstruction = scopeHint 
-        ? `The user has provided a hint to focus EXCLUSIVELY on content related to: "${scopeHint}". You MUST ignore any other topics, even if they appear in the images.` 
-        : '';
-        
+    const scopeInstruction = scopeHint
+        ? `The user has provided a strict focus for this analysis. You MUST EXCLUSIVELY analyze content related to: "${scopeHint}". Any chapters, lessons, or topics present in the images that do NOT fall under this scope must be completely IGNORED. Your entire output must be confined to this scope. This is the most critical instruction.`
+        : 'You are to analyze all content present in the provided document images.';
+
     const multiSubjectInstruction = config.isMultiSubject && config.subjectAllocations
         ? `This is a multi-subject exam. You must distribute the questions and points according to the following allocation: ${config.subjectAllocations.map(s => `${s.subjectName}: ${s.percentage}%`).join(', ')}. When you identify a topic, you MUST assign it to the correct subject in the 'subject' field.`
         : `This is a single-subject exam for ${config.subjectsSummary}. All topics should be assigned to this subject.`;
@@ -258,13 +258,12 @@ export const generateMatrixFromImages = async (
     const essayPointPerQuestion = config.essayCount > 0 ? config.essayPoints / config.essayCount : 0;
 
     const prompt = `
-        You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation.
-        Your task is to analyze the provided document images and create a detailed exam matrix.
+        You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation. Your task is to analyze the provided document images and create a detailed exam matrix.
 
-        CRITICAL: Base your analysis SOLELY on the content visible in the images. Do not use external knowledge.
+        **PRIMARY INSTRUCTION: SCOPE OF ANALYSIS**
         ${scopeInstruction}
-
-        High-Level Exam Configuration:
+        
+        **HIGH-LEVEL EXAM CONFIGURATION:**
         - Exam Duration: ${config.duration}. This is a critical factor for you to consider when assessing the complexity and length of the topics.
         - Exam Difficulty Guideline: ${config.difficulty}. Use this to inform your question distribution. For 'Dễ' (Easy), prioritize 'Biết' (Knowledge) questions. For 'Trung bình' (Medium), ensure a balanced distribution. For 'Trung bình khá' (Medium-Hard), increase the proportion of 'Vận dụng' (Application) questions. This is a general guideline to be used in conjunction with the percentages below.
         - ${multiSubjectInstruction}
@@ -277,21 +276,20 @@ export const generateMatrixFromImages = async (
         - Total number of Essay ('essay') questions: ${config.essayCount}.
         - Cognitive Level Distribution: ${config.knowledgePct}% for Knowledge (Biết), ${config.comprehensionPct}% for Comprehension (Hiểu), ${config.applicationPct}% for Application (Vận dụng).
 
-        Your required tasks are:
-        1.  Identify a suitable overall title for the exam.
-        2.  Identify the main chapters. For each chapter, extract the titles of ALL individual lessons or large sections within it. Each of these lesson/section titles will become a "Nội dung/đơn vị kiến thức".
-        3.  CRITICAL RULE: You MUST identify and list EVERY single lesson found within the document for the relevant chapters. Do not skip or combine lessons. The names for chapters and lesson titles MUST be extracted as verbatim as possible from the document.
-        4.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
-        5.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
-        
-        CRITICAL CONSTRAINTS (You MUST follow these precisely):
-        6.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
-        7.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
-        8.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
-        9.  The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
-        10. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
-        11. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
-        12. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
+        **REQUIRED TASKS & CRITICAL CONSTRAINTS:**
+        1.  Base your analysis SOLELY on the content visible in the images and within the defined scope. Do not use external knowledge.
+        2.  Identify a suitable overall title for the exam.
+        3.  Within the defined scope, identify the main chapters. For each chapter, extract the titles of ALL individual lessons or large sections within it. Each of these lesson/section titles will become a "Nội dung/đơn vị kiến thức".
+        4.  CRITICAL RULE: You MUST identify and list EVERY single lesson found within the document for the relevant chapters (respecting the scope). Do not skip or combine lessons. The names for chapters and lesson titles MUST be extracted as verbatim as possible from the document.
+        5.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
+        6.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
+        7.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
+        8.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
+        9.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
+        10. The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
+        11. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
+        12. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
+        13. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
     `;
     
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
@@ -400,12 +398,17 @@ const generateQuestionsForObjective = async (
         CRITICAL GUIDELINES FOR EACH QUESTION:
         - The question text MUST be in Vietnamese.
         - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
-        - For mathematical or chemical formulas, use LaTeX syntax. Use \\(...\\) for inline formulas and \\[...\\] for display formulas.
-        - CRITICAL: Do NOT wrap plain numbers, years, or simple text in LaTeX delimiters. For example, write "Năm 476" instead of "Năm \\(476\\)". This is very important.
-        - For scientific units with exponents (like square kilometers), write them as 'km²' directly in the text.
+        - CRITICAL: For ALL mathematical expressions (fractions, exponents, roots, symbols, etc.), you MUST use standard LaTeX syntax enclosed in \\(...\\) for inline math. This applies to the 'text', 'options', and 'answer' fields.
+        - IMPORTANT: The backslashes in the delimiters MUST be correctly escaped for the final JSON output. A correct JSON value would be "Giá trị của x là \\(x = \\sqrt{4}\\)".
+          - Example for a fraction: "phép tính \\(-\\frac{3}{8} + \\frac{5}{6}\\)"
+          - Example for an exponent: "tính \\((\\frac{-1}{2})^3\\)"
+          - Example for absolute value: "Cho \\(|a| = -(-\\frac{2}{5})\\)"
+          - Example for square root: "tính \\(\\sqrt{12} + \\sqrt{27} - \\sqrt{3}\\)"
+        - IMPORTANT: Do NOT use LaTeX for simple numbers in a sentence (e.g., "Câu 1", "3,0 điểm", "năm 2024"). Only use it for mathematical formulas.
         - For Multiple Choice questions, the 'options' field MUST be an array with EXACTLY 4 distinct strings. The 'answer' field MUST be the letter of the correct option (e.g., "A").
         - For True/False, the answer must be "Đúng" or "Sai".
-        - For Short Answer or Essay, provide a model answer.
+        - For Short Answer, provide a concise model answer.
+        - For Essay questions, provide a detailed model answer. The answer MUST be structured as a list of bullet points (using '-'). Each bullet point should represent a key idea or a part of the solution. You MUST suggest a reasonable point value for each bullet point, formatted like this: "- [Nội dung chính] (0.25 điểm)".
         - The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
 
         Return a single JSON array containing all the generated question objects.

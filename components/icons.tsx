@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 export const BalDigitechLogo: React.FC<{ className?: string }> = ({ className }) => (

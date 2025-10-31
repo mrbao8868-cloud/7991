@@ -1,35 +1,35 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useMemo } from 'react';
 
-// Inform TypeScript that this function will be available on the window object
-declare const renderMathInElement: any;
+// KaTeX được tải toàn cục từ CDN trong index.html
+declare const katex: any;
 
 const MathRenderer: React.FC<{ content: string, className?: string }> = ({ content, className }) => {
-    const ref = useRef<HTMLSpanElement>(null);
-
-    useEffect(() => {
-        if (ref.current && typeof renderMathInElement === 'function') {
-            // The content is already in the div from the initial render via dangerouslySetInnerHTML.
-            // We just need to run the renderer on it to enhance math expressions.
-            try {
-                renderMathInElement(ref.current, {
-                    delimiters: [
-                        { left: "$$", right: "$$", display: true },
-                        { left: "\\[", right: "\\]", display: true },
-                        { left: "$", right: "$", display: false },
-                        { left: "\\(", right: "\\)", display: false }
-                    ],
-                    throwOnError: false
-                });
-            } catch (error) {
-                console.error("KaTeX rendering error:", error);
-            }
+    // useMemo đảm bảo rằng nội dung chỉ được render lại khi prop `content` thay đổi.
+    const renderedHtml = useMemo(() => {
+        if (!content || typeof katex === 'undefined') {
+            return content;
         }
+
+        // Biểu thức chính quy này tìm tất cả các chuỗi có dạng \(...\) và thay thế chúng.
+        // Đây là cách tiếp cận mạnh mẽ để xử lý nhiều công thức trong cùng một khối văn bản.
+        return content.replace(/\\((.*?)\\)/g, (match, latex) => {
+            try {
+                // renderToString là hàm cốt lõi từ thư viện KaTeX.
+                return katex.renderToString(latex, {
+                    throwOnError: false, // Không báo lỗi, chỉ hiển thị văn bản gốc nếu thất bại.
+                    displayMode: false,
+                });
+            } catch (e) {
+                console.error("KaTeX rendering error:", e);
+                // Trong trường hợp có lỗi, trả về văn bản gốc chưa được render.
+                return match;
+            }
+        });
     }, [content]);
 
-    // Always render the content initially using dangerouslySetInnerHTML.
-    // This prevents a flicker of empty content and ensures text is visible immediately.
-    // The useEffect hook will then progressively enhance it with KaTeX rendering.
-    return <span ref={ref} className={className} dangerouslySetInnerHTML={{ __html: content }} />;
+    // dangerouslySetInnerHTML là cần thiết ở đây vì KaTeX xuất ra mã HTML thô.
+    // Quá trình này an toàn vì chúng ta đang kiểm soát đầu vào và chỉ xử lý LaTeX.
+    return <span className={className} dangerouslySetInnerHTML={{ __html: renderedHtml }} />;
 };
 
 export default MathRenderer;
