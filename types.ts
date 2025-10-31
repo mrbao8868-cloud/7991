@@ -72,6 +72,8 @@ export interface Topic extends TopicConfig {
   id: string;
   chapter: string;
   name: string;
+  // FIX: Added optional 'subject' property to align with GeneratedTopicConfig and resolve type errors.
+  subject?: string;
   questions: Question[];
   generationStatus: 'pending' | 'generating' | 'completed' | 'failed';
   generationError?: string;

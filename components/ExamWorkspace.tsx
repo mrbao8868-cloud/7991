@@ -4,8 +4,6 @@ import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangle
 import { generateAllQuestionsForTopics, generateSpecification, generateMatrixFromImages } from '../services/geminiService';
 import MathRenderer from './MathRenderer';
 
-declare const renderMathInElement: any;
-
 interface ExamWorkspaceProps {
     examConfig: ExamConfig;
     documentImages: string[];
@@ -126,7 +124,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     const [specError, setSpecError] = useState<string | null>(null);
     const [questionsError, setQuestionsError] = useState<string | null>(null);
 
-    const previewContainerRef = useRef<HTMLDivElement>(null);
     const printableAreaRef = useRef<HTMLDivElement>(null);
     const allQuestions = topics.flatMap(t => t.questions || []);
 
@@ -314,7 +311,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     </x:ExcelWorkbook>
                 </xml>
                 <![endif]-->
-                <meta http-equiv="content-type" content="text/plain; charset=UTF-8"/>
+                <meta charset="UTF-8">
                 <style>
                     table, th, td {
                         border: 1px solid black;
@@ -799,22 +796,38 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                     <div key={q.id} className="mb-4 exam-question">
                                         <p><b>Câu {questionCounter}: </b><MathRenderer content={q.text} /></p>
                                         {Array.isArray(q.options) && q.options.length === 4 && (
-                                            <table className="exam-question-options-table">
+                                            <table className="exam-question-options-table mt-2 w-full border-collapse">
                                                 <tbody>
                                                     <tr>
-                                                        <td><b>A. </b><MathRenderer content={q.options[0]} /></td>
-                                                        <td><b>B. </b><MathRenderer content={q.options[1]} /></td>
+                                                        <td className="w-1/2 pr-4 align-top"><b>A. </b><MathRenderer content={q.options[0]} /></td>
+                                                        <td className="w-1/2 pl-4 align-top"><b>B. </b><MathRenderer content={q.options[1]} /></td>
                                                     </tr>
                                                     <tr>
-                                                        <td><b>C. </b><MathRenderer content={q.options[2]} /></td>
-                                                        <td><b>D. </b><MathRenderer content={q.options[3]} /></td>
+                                                        <td className="w-1/2 pr-4 align-top pt-1"><b>C. </b><MathRenderer content={q.options[2]} /></td>
+                                                        <td className="w-1/2 pl-4 align-top pt-1"><b>D. </b><MathRenderer content={q.options[3]} /></td>
                                                     </tr>
                                                 </tbody>
                                             </table>
                                         )}
                                     </div>
                                 );
-                            } else { // For TF and Short Answer
+                            } else if (q.type === QuestionType.TRUE_FALSE) {
+                                return (
+                                    <div key={q.id} className="mb-4 exam-question">
+                                        <p><b>Câu {questionCounter}: </b><MathRenderer content={q.text} /></p>
+                                        {Array.isArray(q.options) && q.options.length === 2 && (
+                                            <table className="exam-question-options-table mt-2 w-full border-collapse">
+                                                <tbody>
+                                                    <tr>
+                                                        <td className="w-1/2 pr-4 align-top"><b>A. </b><MathRenderer content={q.options[0]} /></td>
+                                                        <td className="w-1/2 pl-4 align-top"><b>B. </b><MathRenderer content={q.options[1]} /></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                );
+                            } else { // For Short Answer
                                 return (
                                      <div key={q.id} className="mb-4 exam-question">
                                         <p><b>Câu {questionCounter}: </b><MathRenderer content={q.text} /></p>
@@ -963,11 +976,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                         {renderMatrix()}
                         <div className="mt-8 pt-6 border-t flex justify-end no-print">
                             <button
-                                onClick={() => handleDownloadXls('matrix-table', 'Ma_tran_de_thi.xlsx')}
+                                onClick={() => handleDownloadXls('matrix-table', 'Ma_tran_de_thi.xls')}
                                 className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700"
                             >
                                 <DocumentArrowDownIcon className="w-5 h-5"/>
-                                Tải Ma trận (.xlsx)
+                                Tải Ma trận (.xls)
                             </button>
                         </div>
                     </>
@@ -979,11 +992,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                             {renderSpecification()}
                             <div className="mt-8 pt-6 border-t flex justify-end no-print">
                                 <button
-                                    onClick={() => handleDownloadXls('spec-table', 'Ban_dac_ta.xlsx')}
+                                    onClick={() => handleDownloadXls('spec-table', 'Ban_dac_ta.xls')}
                                     className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700"
                                 >
                                     <DocumentArrowDownIcon className="w-5 h-5"/>
-                                    Tải Đặc tả (.xlsx)
+                                    Tải Đặc tả (.xls)
                                 </button>
                             </div>
                         </>
@@ -1079,7 +1092,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                         <div className="mt-6">
                              <div id="exam-preview-content" className="p-6 bg-slate-50/70 rounded-lg border">
                                 {allGeneratedQuestions.length > 0 ? (
-                                    <div ref={previewContainerRef} className="preview-container" style={{ fontFamily: "'Times New Roman', serif", fontSize: '13pt', lineHeight: 1.5 }}>
+                                    <div className="preview-container" style={{ fontFamily: "'Times New Roman', serif", fontSize: '13pt', lineHeight: 1.5 }}>
                                         {renderExamAndAnswers()}
                                     </div>
                                 ) : (

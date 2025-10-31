@@ -118,9 +118,9 @@ const questionSchema = {
     options: {
       type: Type.ARRAY,
       items: { type: Type.STRING },
-      description: 'An array of EXACTLY 4 options (A, B, C, D) for multiple choice questions. For other question types, this MUST be an empty array.'
+      description: 'An array of options. For Multiple Choice, it MUST contain EXACTLY 4 options. For True/False, it MUST contain EXACTLY 2 options: ["Đúng", "Sai"] (or ["True", "False"] for English). For other types, it MUST be an empty array.'
     },
-    answer: { type: Type.STRING, description: 'The correct answer. For multiple choice, it should be the letter (e.g., "A"). For True/False, it should be "Đúng" or "Sai". For essays/short answer, provide a brief model answer or key points.' },
+    answer: { type: Type.STRING, description: 'The correct answer. For Multiple Choice and True/False questions, it MUST be the letter of the correct option (e.g., "A", "B"). For True/False, "A" corresponds to the first option ("Đúng"/"True") and "B" to the second. For essays/short answer, provide a brief model answer or key points.' },
   },
   required: ['text', 'type', 'level', 'answer', 'learningObjective']
 };
@@ -256,6 +256,18 @@ export const generateMatrixFromImages = async (
     const totalTnkqCount = config.mcCount + config.tfCount + config.saCount;
     const tnkqPointPerQuestion = totalTnkqCount > 0 ? config.tnkqPoints / totalTnkqCount : 0;
     const essayPointPerQuestion = config.essayCount > 0 ? config.essayPoints / config.essayCount : 0;
+    
+    const containsEnglishSubject = config.subjectsSummary.toLowerCase().includes('tiếng anh');
+    let languageInstruction = 'All text output must be in Vietnamese.';
+    if (containsEnglishSubject) {
+        if (config.isMultiSubject) {
+            languageInstruction = "For any topics related to the subject 'Tiếng Anh', all text output (chapter, name) must be in English. For all other subjects, the output must be in Vietnamese.";
+        } else {
+            languageInstruction = 'All text output (chapter, name, etc.) must be in English.';
+        }
+    }
+    const systemInstruction = `You are an expert AI curriculum designer for education. Your primary function is to generate a valid and logical exam matrix based on source material and strict constraints. ${languageInstruction}`;
+
 
     const prompt = `
         You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation. Your task is to analyze the provided document images and create a detailed exam matrix.
@@ -297,7 +309,7 @@ export const generateMatrixFromImages = async (
             model: 'gemini-2.5-pro',
             contents: { parts: [{ text: prompt }, ...imageParts] },
             config: {
-                systemInstruction: 'You are an expert AI curriculum designer for Vietnamese education. Your primary function is to generate a valid and logical exam matrix based on source material and strict constraints. All text output must be in Vietnamese.',
+                systemInstruction: systemInstruction,
                 responseMimeType: 'application/json',
                 responseSchema: matrixResponseSchema
             }
@@ -319,10 +331,25 @@ export const generateSpecification = async (
     onKeyRotated: (newKey: string) => void,
     topics: Topic[]
 ): Promise<SpecTopic[]> => {
+    const hasEnglishTopic = topics.some(t => t.subject?.toLowerCase().includes('tiếng anh'));
+
+    const promptIntro = hasEnglishTopic
+        ? `You are an expert in curriculum design. Your task is to create a detailed exam specification based on the provided exam matrix. For topics in English, create specific, detailed "learning objectives" in English. For topics in Vietnamese, create "Yêu cầu cần đạt" in Vietnamese.`
+        : `You are an expert in Vietnamese curriculum design. Your task is to create a detailed exam specification ("Bản đặc tả") based on the provided exam matrix.`;
+
+    const objectiveInstruction = hasEnglishTopic
+        ? `Break down the topic into specific, detailed learning objectives. These objectives must be in the same language as their corresponding topic (English for 'Tiếng Anh' topics, Vietnamese for others).`
+        : `Break down the topic into specific, detailed learning objectives ("Yêu cầu cần đạt").`;
+    
+    const systemInstruction = hasEnglishTopic
+        ? "You are an expert AI assistant for educators. Your task is to create a detailed and accurate exam specification based on a provided matrix, handling both English and Vietnamese content as instructed. You must strictly follow the question counts and return a valid JSON array as per the schema."
+        : "You are an expert AI assistant for Vietnamese educators. Your task is to create a detailed and accurate exam specification based on a provided matrix. You must strictly follow the question counts and return a valid JSON array as per the schema.";
+
+
     const prompt = `
-        You are an expert in Vietnamese curriculum design. Your task is to create a detailed exam specification ("Bản đặc tả") based on the provided exam matrix.
+        ${promptIntro}
         For each topic provided, you must:
-        1. Break down the topic into specific, detailed learning objectives ("Yêu cầu cần đạt"). There can be one or more objectives per topic.
+        1. ${objectiveInstruction} There can be one or more objectives per topic.
         2. Distribute the required number of questions for that topic among the learning objectives you've created.
         3. The total number of questions for each type/level, when summed across all objectives within a topic, MUST EXACTLY MATCH the numbers provided for that topic in the input. Do not add or remove any questions.
 
@@ -331,6 +358,7 @@ export const generateSpecification = async (
             id: t.id,
             chapter: t.chapter,
             name: t.name,
+            subject: t.subject, // Provide subject to AI for context
             ...questionKeys.reduce((acc, key) => ({ ...acc, [key]: t[key] }), {})
         })))}
 
@@ -342,7 +370,7 @@ export const generateSpecification = async (
             model: 'gemini-2.5-pro',
             contents: prompt,
             config: {
-                systemInstruction: "You are an expert AI assistant for Vietnamese educators. Your task is to create a detailed and accurate exam specification based on a provided matrix. You must strictly follow the question counts and return a valid JSON array as per the schema.",
+                systemInstruction: systemInstruction,
                 responseMimeType: 'application/json',
                 responseSchema: {
                     type: Type.ARRAY,
@@ -367,18 +395,32 @@ const generateQuestionsForObjective = async (
     chapter: string,
     topicName: string,
     objective: ObjectiveSpec,
+    subject: string | undefined,
     onQuestionsGenerated: (questions: Question[]) => void
 ): Promise<void> => {
+    const isEnglishSubject = subject?.toLowerCase().includes('tiếng anh');
     const questionRequests: string[] = [];
     let totalQuestionsToGenerate = 0;
+
+    const typeMap = {
+        mc: { vi: "Trắc nghiệm nhiều lựa chọn", en: "Multiple Choice" },
+        tf: { vi: "Trắc nghiệm Đúng/Sai", en: "True/False" },
+        sa: { vi: "Trả lời ngắn", en: "Short Answer" },
+        essay: { vi: "Tự luận", en: "Essay" }
+    };
+    const levelMap = {
+        knowledge: { vi: "Biết", en: "Knowledge" },
+        comprehension: { vi: "Hiểu", en: "Comprehension" },
+        application: { vi: "Vận dụng", en: "Application" }
+    };
 
     for (const key of questionKeys) {
         const count = objective.counts[key] || 0;
         if (count > 0) {
             const [typeKey, levelKey] = key.split('_');
-            const typeMap: { [key: string]: string } = { mc: "Trắc nghiệm nhiều lựa chọn", tf: "Trắc nghiệm Đúng/Sai", sa: "Trả lời ngắn", essay: "Tự luận" };
-            const levelMap: { [key: string]: string } = { knowledge: "Biết", comprehension: "Hiểu", application: "Vận dụng" };
-            questionRequests.push(`${count} câu hỏi loại "${typeMap[typeKey]}" ở mức độ "${levelMap[levelKey]}"`);
+            const typeText = isEnglishSubject ? typeMap[typeKey as keyof typeof typeMap].en : typeMap[typeKey as keyof typeof typeMap].vi;
+            const levelText = isEnglishSubject ? levelMap[levelKey as keyof typeof levelMap].en : levelMap[levelKey as keyof typeof levelMap].vi;
+            questionRequests.push(isEnglishSubject ? `${count} ${typeText} question(s) at the ${levelText} level` : `${count} câu hỏi loại "${typeText}" ở mức độ "${levelText}"`);
             totalQuestionsToGenerate += count;
         }
     }
@@ -387,39 +429,70 @@ const generateQuestionsForObjective = async (
         return;
     }
 
-    const prompt = `
-        Chapter: "${chapter}"
-        Topic: "${topicName}"
+    const essayAnswerInstruction = isEnglishSubject
+        ? `For Essay questions, provide a detailed model answer. The answer MUST be structured as a list of bullet points (using '-'). Each bullet point should represent a key idea or a part of the solution. You MUST suggest a reasonable point value for each bullet point, formatted like this: "- [Main point] (0.25 points)".`
+        : `For Essay questions, provide a detailed model answer. The answer MUST be structured as a list of bullet points (using '-'). Each bullet point should represent a key idea or a part of the solution. You MUST suggest a reasonable point value for each bullet point, formatted like this: "- [Nội dung chính] (0.25 điểm)".`;
+
+    const latexInstruction = `
+        - CRITICAL: For ALL mathematical and chemical expressions, you MUST use standard, correct LaTeX syntax enclosed in \\(...\\) for inline math.
+        - Use standard LaTeX commands for all mathematical notation. For example: \\(x^2\\) for exponents, \\(\\sqrt{16}\\) for square roots, \\(\\frac{a}{b}\\) for fractions. Do not use plain text for these.
+        - For chemical formulas and equations, you MUST use the mhchem extension syntax (e.g., \\ce{H2O}, \\ce{Fe^{3+}}, \\ce{2H2 + O2 -> 2H2O}) INSIDE the standard \\(...\\) delimiters.
+        - This applies to the 'text', 'options', and 'answer' fields.
+        - IMPORTANT: The backslashes in the delimiters MUST be correctly escaped for the final JSON output.
+          - Math Example (exponent): "Giá trị của \\(3^4\\) là bao nhiêu?"
+          - Math Example (fraction): "Kết quả của phép tính \\(-\\frac{3}{8} + \\frac{5}{6}\\) là"
+          - Math Example (square root): "Căn bậc hai của 81 là \\(\\sqrt{81}\\)."
+          - Chemistry Example (formula): "Công thức của nước là \\(\\ce{H2O}\\)"
+          - Chemistry Example (ion): "ion Sắt(III) được viết là \\(\\ce{Fe^{3+}}\\)"
+          - Chemistry Example (equation): "Phản ứng \\(\\ce{2H2 + O2 -> 2H2O}\\)"
+        - IMPORTANT: Do NOT use LaTeX for simple numbers or plain text (e.g., "Câu 1", "3,0 điểm", "năm 2024"). Only use it for formulas, equations, and mathematical notations.
+    `;
+    
+    const basePrompt = `
         Learning Objective: "${objective.learningObjective}"
 
-        Based on the above context, generate a single JSON array containing a total of ${totalQuestionsToGenerate} questions that SPECIFICALLY assess this learning objective. The required questions are:
+        Based on the provided context, generate a single JSON array containing a total of ${totalQuestionsToGenerate} questions that SPECIFICALLY assess this learning objective. The required questions are:
         - ${questionRequests.join('\n- ')}
 
         CRITICAL GUIDELINES FOR EACH QUESTION:
-        - The question text MUST be in Vietnamese.
         - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
-        - CRITICAL: For ALL mathematical expressions (fractions, exponents, roots, symbols, etc.), you MUST use standard LaTeX syntax enclosed in \\(...\\) for inline math. This applies to the 'text', 'options', and 'answer' fields.
-        - IMPORTANT: The backslashes in the delimiters MUST be correctly escaped for the final JSON output. A correct JSON value would be "Giá trị của x là \\(x = \\sqrt{4}\\)".
-          - Example for a fraction: "phép tính \\(-\\frac{3}{8} + \\frac{5}{6}\\)"
-          - Example for an exponent: "tính \\((\\frac{-1}{2})^3\\)"
-          - Example for absolute value: "Cho \\(|a| = -(-\\frac{2}{5})\\)"
-          - Example for square root: "tính \\(\\sqrt{12} + \\sqrt{27} - \\sqrt{3}\\)"
-        - IMPORTANT: Do NOT use LaTeX for simple numbers in a sentence (e.g., "Câu 1", "3,0 điểm", "năm 2024"). Only use it for mathematical formulas.
+        ${isEnglishSubject ? '' : latexInstruction}
         - For Multiple Choice questions, the 'options' field MUST be an array with EXACTLY 4 distinct strings. The 'answer' field MUST be the letter of the correct option (e.g., "A").
-        - For True/False, the answer must be "Đúng" or "Sai".
+        - For True/False questions, the 'options' field MUST be an array with EXACTLY 2 strings: ["Đúng", "Sai"] (or ["True", "False"] for English). The 'answer' field MUST be the letter of the correct option ("A" if the statement is true, "B" if it is false).
         - For Short Answer, provide a concise model answer.
-        - For Essay questions, provide a detailed model answer. The answer MUST be structured as a list of bullet points (using '-'). Each bullet point should represent a key idea or a part of the solution. You MUST suggest a reasonable point value for each bullet point, formatted like this: "- [Nội dung chính] (0.25 điểm)".
+        - ${essayAnswerInstruction}
         - The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
 
         Return a single JSON array containing all the generated question objects.
     `;
+    
+    const prompt = isEnglishSubject ? `
+        Subject: English
+        Chapter: "${chapter}"
+        Topic: "${topicName}"
+        
+        Generate questions in ENGLISH.
+
+        ${basePrompt}
+    ` : `
+        Chương: "${chapter}"
+        Chủ đề: "${topicName}"
+        
+        Tạo câu hỏi bằng TIẾNG VIỆT.
+
+        ${basePrompt}
+    `;
+
+    const systemInstruction = isEnglishSubject ? 
+    "You are an expert in creating educational materials for English language learners. You will generate a batch of questions in English based on a specific learning objective. You must strictly adhere to the requested JSON schema and question counts." :
+    "You are an expert in creating educational materials for Vietnamese schools. You will generate a batch of questions based on a specific learning objective. All content must be in Vietnamese and strictly adhere to the requested JSON schema and question counts.";
 
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
         return ai.models.generateContent({
             model: 'gemini-2.5-pro',
             contents: prompt,
             config: {
-                systemInstruction: "You are an expert in creating educational materials for Vietnamese schools. You will generate a batch of questions based on a specific learning objective. All content must be in Vietnamese and strictly adhere to the requested JSON schema and question counts.",
+                systemInstruction: systemInstruction,
                 responseMimeType: 'application/json',
                 responseSchema: {
                     type: Type.ARRAY,
@@ -477,7 +550,7 @@ export const generateAllQuestionsForTopics = async (
                     });
                 };
                 
-                await generateQuestionsForObjective(keysToTry, onKeyRotated, spec.chapter, spec.name, obj, onQuestionsGenerated);
+                await generateQuestionsForObjective(keysToTry, onKeyRotated, spec.chapter, spec.name, obj, originalTopic.subject, onQuestionsGenerated);
             }
             
             if (masterError) continue;

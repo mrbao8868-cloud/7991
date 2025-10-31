@@ -1,35 +1,43 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 
-// KaTeX được tải toàn cục từ CDN trong index.html
+// Khai báo katex sẽ có sẵn trên đối tượng window
 declare const katex: any;
 
 const MathRenderer: React.FC<{ content: string, className?: string }> = ({ content, className }) => {
-    // useMemo đảm bảo rằng nội dung chỉ được render lại khi prop `content` thay đổi.
-    const renderedHtml = useMemo(() => {
-        if (!content || typeof katex === 'undefined') {
-            return content;
-        }
+    // Nếu katex chưa tải hoặc không có nội dung, trả về văn bản thuần túy
+    if (typeof katex === 'undefined' || !content) {
+        return <span className={className}>{content}</span>;
+    }
 
-        // Biểu thức chính quy này tìm tất cả các chuỗi có dạng \(...\) và thay thế chúng.
-        // Đây là cách tiếp cận mạnh mẽ để xử lý nhiều công thức trong cùng một khối văn bản.
-        return content.replace(/\\((.*?)\\)/g, (match, latex) => {
-            try {
-                // renderToString là hàm cốt lõi từ thư viện KaTeX.
-                return katex.renderToString(latex, {
-                    throwOnError: false, // Không báo lỗi, chỉ hiển thị văn bản gốc nếu thất bại.
-                    displayMode: false,
-                });
-            } catch (e) {
-                console.error("KaTeX rendering error:", e);
-                // Trong trường hợp có lỗi, trả về văn bản gốc chưa được render.
-                return match;
-            }
-        });
-    }, [content]);
+    try {
+        // Regex để tìm và tách chuỗi bằng các dấu phân cách LaTeX \\(...\\)
+        const parts = content.split(/(\\\(.*?\\\))/g);
 
-    // dangerouslySetInnerHTML là cần thiết ở đây vì KaTeX xuất ra mã HTML thô.
-    // Quá trình này an toàn vì chúng ta đang kiểm soát đầu vào và chỉ xử lý LaTeX.
-    return <span className={className} dangerouslySetInnerHTML={{ __html: renderedHtml }} />;
+        return (
+            <span className={className}>
+                {parts.map((part, index) => {
+                    // Kiểm tra xem phần hiện tại có phải là một biểu thức LaTeX không
+                    if (part.startsWith('\\(') && part.endsWith('\\)')) {
+                        // Trích xuất nội dung toán học từ giữa các dấu phân cách
+                        const math = part.substring(2, part.length - 2);
+                        // Render công thức toán học thành một chuỗi HTML một cách đồng bộ
+                        const html = katex.renderToString(math, {
+                            throwOnError: false,
+                            displayMode: false,
+                        });
+                        // Sử dụng dangerouslySetInnerHTML để render HTML do KaTeX tạo ra
+                        return <span key={index} dangerouslySetInnerHTML={{ __html: html }} />;
+                    }
+                    // Nếu không phải là một phần toán học, render nó như văn bản thuần túy
+                    return part;
+                })}
+            </span>
+        );
+    } catch (e) {
+        console.error("MathRenderer không thể render:", e);
+        // Dự phòng, hiển thị nội dung gốc nếu có bất kỳ lỗi nào xảy ra trong quá trình render
+        return <span className={className}>{content}</span>;
+    }
 };
 
 export default MathRenderer;
