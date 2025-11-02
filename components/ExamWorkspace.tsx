@@ -667,8 +667,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                              <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-2 w-[3%]">TT</th>
                                 <th rowSpan={4} className="border border-slate-300 p-2 w-[10%]">Chủ đề/Chương</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[23%]">Nội dung/đơn vị kiến thức</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[46%]">Yêu cầu cần đạt</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[18%]">Nội dung/đơn vị kiến thức</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[23%]">Yêu cầu cần đạt</th>
+                                <th rowSpan={4} className="border border-slate-300 p-2 w-[23%]">Năng lực đặc thù</th>
                                 <th colSpan={12} className="border border-slate-300 p-2">Số câu hỏi ở các mức độ đánh giá</th>
                             </tr>
                             <tr>
@@ -703,6 +704,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                                 {isFirstChapterRow && <td rowSpan={chapterData.chapterRowCount} className="border border-slate-300 p-2 text-left font-semibold align-top">{chapter}</td>}
                                                 {isFirstTopicRow && <td rowSpan={topicData.topicRowCount} className="border border-slate-300 p-2 text-left align-top">{topicName}</td>}
                                                 <td className="border border-slate-300 p-2 text-left align-middle">{objective.learningObjective}</td>
+                                                <td className="border border-slate-300 p-2 text-left align-middle">{objective.specificCompetency}</td>
                                                 {questionKeys.map(key => <td key={key} className="border border-slate-300 p-2 align-middle">{objective.counts[key] || ''}</td>)}
                                             </tr>
                                         );
@@ -713,21 +715,21 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                         </tbody>
                         <tfoot className="font-bold text-center bg-slate-50">
                             <tr>
-                                <td colSpan={4} className="border border-slate-300 p-2">Tổng số câu</td>
+                                <td colSpan={5} className="border border-slate-300 p-2">Tổng số câu</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{specTotals.essay_knowledge + specTotals.essay_comprehension + specTotals.essay_application}</td>
                             </tr>
                             <tr>
-                                <td colSpan={4} className="border border-slate-300 p-2">Tổng số điểm</td>
+                                <td colSpan={5} className="border border-slate-300 p-2">Tổng số điểm</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{formatScore(mcScore)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{formatScore(tfScore)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{formatScore(saScore)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{formatScore(essayScore)}</td>
                             </tr>
                             <tr>
-                                <td colSpan={4} className="border border-slate-300 p-2">Tỉ lệ %</td>
+                                <td colSpan={5} className="border border-slate-300 p-2">Tỉ lệ %</td>
                                 <td colSpan={9} className="border border-slate-300 p-2">{totalScore > 0 ? Math.round((mcScore + tfScore + saScore) / totalScore * 100) : '0'}%</td>
                                 <td colSpan={3} className="border border-slate-300 p-2">{totalScore > 0 ? Math.round(essayScore / totalScore * 100) : '0'}%</td>
                             </tr>
@@ -744,14 +746,13 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         
         const allQuestions = topics.flatMap(t => t.questions || []);
 
-        const tnkqQuestions = allQuestions.filter(q => 
-            q.type === QuestionType.MULTIPLE_CHOICE || 
-            q.type === QuestionType.TRUE_FALSE || 
-            q.type === QuestionType.SHORT_ANSWER
-        );
-        const tuLuanQuestions = allQuestions.filter(q => q.type === QuestionType.ESSAY);
+        const mcQuestions = allQuestions.filter(q => q.type === QuestionType.MULTIPLE_CHOICE);
+        const tfQuestions = allQuestions.filter(q => q.type === QuestionType.TRUE_FALSE);
+        const saQuestions = allQuestions.filter(q => q.type === QuestionType.SHORT_ANSWER);
+        const essayQuestions = allQuestions.filter(q => q.type === QuestionType.ESSAY);
         
-        const tnkqScorePerItem = tnkqQuestions.length > 0 ? tnkqPoints / tnkqQuestions.length : 0;
+        const tnkqQuestionCount = mcQuestions.length + tfQuestions.length + saQuestions.length;
+        const tnkqScorePerItem = tnkqQuestionCount > 0 ? tnkqPoints / tnkqQuestionCount : 0;
         
         let questionCounter = 0;
         const formatPoints = (points: number) => points.toLocaleString('vi-VN');
@@ -785,16 +786,16 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     </tbody>
                 </table>
         
-                {tnkqQuestions.length > 0 && (
+                {(mcQuestions.length + tfQuestions.length + saQuestions.length) > 0 && (
                     <div className="mb-8">
-                        <p className="font-bold text-center mb-2 uppercase">PHẦN TRẮC NGHIỆM ({formatPoints(tnkqPoints)} điểm)</p>
-                        <p className="italic text-center mb-4">(Học sinh tô vào phiếu trả lời trắc nghiệm)</p>
-                        {tnkqQuestions.map(q => {
-                            questionCounter++;
-                            if (q.type === QuestionType.MULTIPLE_CHOICE) {
-                                return (
+                        <p className="font-bold text-center mb-4 uppercase">A. PHẦN TRẮC NGHIỆM KHÁCH QUAN ({formatPoints(tnkqPoints)} điểm)</p>
+
+                        {mcQuestions.length > 0 && (
+                            <div className="mb-6">
+                                <p className="font-bold mb-2">I. Trắc nghiệm nhiều lựa chọn</p>
+                                {mcQuestions.map(q => (
                                     <div key={q.id} className="mb-4 exam-question">
-                                        <p><b>Câu {questionCounter}: </b><MathRenderer content={q.text} /></p>
+                                        <p><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
                                         {Array.isArray(q.options) && q.options.length === 4 && (
                                             <table className="exam-question-options-table mt-2 w-full border-collapse">
                                                 <tbody>
@@ -810,39 +811,52 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                             </table>
                                         )}
                                     </div>
-                                );
-                            } else if (q.type === QuestionType.TRUE_FALSE) {
-                                return (
+                                ))}
+                            </div>
+                        )}
+
+                        {tfQuestions.length > 0 && (
+                            <div className="mb-6">
+                                <p className="font-bold mb-2">II. Câu hỏi đúng sai</p>
+                                {tfQuestions.map(q => (
                                     <div key={q.id} className="mb-4 exam-question">
-                                        <p><b>Câu {questionCounter}: </b><MathRenderer content={q.text} /></p>
-                                        {Array.isArray(q.options) && q.options.length === 2 && (
+                                        <p><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
+                                        {Array.isArray(q.options) && q.options.length === 4 && (
                                             <table className="exam-question-options-table mt-2 w-full border-collapse">
                                                 <tbody>
                                                     <tr>
                                                         <td className="w-1/2 pr-4 align-top"><b>A. </b><MathRenderer content={q.options[0]} /></td>
                                                         <td className="w-1/2 pl-4 align-top"><b>B. </b><MathRenderer content={q.options[1]} /></td>
                                                     </tr>
+                                                    <tr>
+                                                        <td className="w-1/2 pr-4 align-top pt-1"><b>C. </b><MathRenderer content={q.options[2]} /></td>
+                                                        <td className="w-1/2 pl-4 align-top pt-1"><b>D. </b><MathRenderer content={q.options[3]} /></td>
+                                                    </tr>
                                                 </tbody>
                                             </table>
                                         )}
                                     </div>
-                                );
-                            } else { // For Short Answer
-                                return (
+                                ))}
+                            </div>
+                        )}
+
+                        {saQuestions.length > 0 && (
+                             <div className="mb-6">
+                                <p className="font-bold mb-2">III. Trả lời ngắn</p>
+                                {saQuestions.map(q => (
                                      <div key={q.id} className="mb-4 exam-question">
-                                        <p><b>Câu {questionCounter}: </b><MathRenderer content={q.text} /></p>
+                                        <p><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
                                     </div>
-                                );
-                            }
-                        })}
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
                 
-                {tuLuanQuestions.length > 0 && (
+                {essayQuestions.length > 0 && (
                      <div className="mb-8">
-                        <p className="font-bold text-center mb-2 uppercase">PHẦN TỰ LUẬN ({formatPoints(essayPoints)} điểm)</p>
-                        <p className="italic text-center mb-4">(Học sinh xem đề và làm bài ở mặt sau của phiếu trắc nghiệm)</p>
-                         {tuLuanQuestions.map(q => (
+                        <p className="font-bold text-center mb-2 uppercase">B. PHẦN TỰ LUẬN ({formatPoints(essayPoints)} điểm)</p>
+                         {essayQuestions.map(q => (
                             <div key={q.id} className="mb-4 exam-question">
                                 <p><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
                             </div>
@@ -852,79 +866,125 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             </div>
         );
         
-        const allAnswerQuestions = topics.flatMap(t => t.questions || []);
-        const mcQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.MULTIPLE_CHOICE);
-        const tfQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.TRUE_FALSE);
-        const saQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.SHORT_ANSWER);
-        const essayQuestions = allAnswerQuestions.filter(q => q.type === QuestionType.ESSAY);
-
         const mcMidpoint = Math.ceil(mcQuestions.length / 2);
         const mcAnswersCol1 = mcQuestions.slice(0, mcMidpoint);
         const mcAnswersCol2 = mcQuestions.slice(mcMidpoint);
+
+        const tfMidpoint = Math.ceil(tfQuestions.length / 2);
+        const tfAnswersCol1 = tfQuestions.slice(0, tfMidpoint);
+        const tfAnswersCol2 = tfQuestions.slice(tfMidpoint);
+
+        let answerCounter = 0;
     
         const answerPart = (
             <div>
                 <h2 className="text-lg font-bold text-center mb-6 uppercase">ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM</h2>
                 
-                {mcQuestions.length > 0 && (
+                {(mcQuestions.length + tfQuestions.length + saQuestions.length) > 0 && (
                     <div className="mb-8 break-inside-avoid">
-                        <p className="font-bold mb-2">PHẦN TRẮC NGHIỆM</p>
+                        <p className="font-bold mb-2">A. PHẦN TRẮC NGHIỆM KHÁCH QUAN ({formatPoints(tnkqPoints)} điểm)</p>
                         <p className="mb-4">Mỗi câu trả lời đúng được {tnkqScorePerItem.toFixed(2).replace('.',',')} điểm.</p>
-                        <div className="flex justify-center space-x-16">
-                            <table className="w-auto border-collapse">
-                                <thead>
-                                    <tr>
-                                        <th className="border p-2 font-bold">Câu</th>
-                                        <th className="border p-2 font-bold">Đáp án</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {mcAnswersCol1.map((q, index) => (
-                                        <tr key={q.id}>
-                                            <td className="border p-2 text-center">{index + 1}</td>
-                                            <td className="border p-2 text-center">{q.answer}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                            {mcAnswersCol2.length > 0 && (
-                                <table className="w-auto border-collapse">
-                                    <thead>
-                                        <tr>
-                                            <th className="border p-2 font-bold">Câu</th>
-                                            <th className="border p-2 font-bold">Đáp án</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {mcAnswersCol2.map((q, index) => (
-                                            <tr key={q.id}>
-                                                <td className="border p-2 text-center">{mcMidpoint + index + 1}</td>
-                                                <td className="border p-2 text-center">{q.answer}</td>
+                        
+                        {mcQuestions.length > 0 && (
+                            <div className="mb-6">
+                                <p className="font-semibold mb-2">I. Trắc nghiệm nhiều lựa chọn</p>
+                                <div className="flex justify-center space-x-16">
+                                    <table className="w-auto border-collapse">
+                                        <thead>
+                                            <tr>
+                                                <th className="border p-2 font-bold">Câu</th>
+                                                <th className="border p-2 font-bold">Đáp án</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            )}
-                        </div>
-                    </div>
-                )}
-                
-                {(tfQuestions.length > 0 || saQuestions.length > 0) && (
-                     <div className="mb-8 break-inside-avoid">
-                        {tfQuestions.map((q, index) => (
-                            <div key={q.id} className="mb-2"><b>Câu {mcQuestions.length + index + 1}:</b> {q.answer}</div>
-                        ))}
-                        {saQuestions.map((q, index) => (
-                            <div key={q.id} className="mb-2"><b>Câu {mcQuestions.length + tfQuestions.length + index + 1}:</b> <MathRenderer content={q.answer}/></div>
-                        ))}
+                                        </thead>
+                                        <tbody>
+                                            {mcAnswersCol1.map((q) => (
+                                                <tr key={q.id}>
+                                                    <td className="border p-2 text-center">{++answerCounter}</td>
+                                                    <td className="border p-2 text-center">{q.answer}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    {mcAnswersCol2.length > 0 && (
+                                        <table className="w-auto border-collapse">
+                                            <thead>
+                                                <tr>
+                                                    <th className="border p-2 font-bold">Câu</th>
+                                                    <th className="border p-2 font-bold">Đáp án</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {mcAnswersCol2.map((q) => (
+                                                    <tr key={q.id}>
+                                                        <td className="border p-2 text-center">{++answerCounter}</td>
+                                                        <td className="border p-2 text-center">{q.answer}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {tfQuestions.length > 0 && (
+                            <div className="mb-6">
+                                <p className="font-semibold mb-2">II. Câu hỏi đúng sai</p>
+                                <div className="flex justify-center space-x-16">
+                                    <table className="w-auto border-collapse">
+                                        <thead>
+                                            <tr>
+                                                <th className="border p-2 font-bold">Câu</th>
+                                                <th className="border p-2 font-bold">Đáp án</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {tfAnswersCol1.map((q) => (
+                                                <tr key={q.id}>
+                                                    <td className="border p-2 text-center">{++answerCounter}</td>
+                                                    <td className="border p-2 text-center">{q.answer}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    {tfAnswersCol2.length > 0 && (
+                                        <table className="w-auto border-collapse">
+                                            <thead>
+                                                <tr>
+                                                    <th className="border p-2 font-bold">Câu</th>
+                                                    <th className="border p-2 font-bold">Đáp án</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {tfAnswersCol2.map((q) => (
+                                                    <tr key={q.id}>
+                                                        <td className="border p-2 text-center">{++answerCounter}</td>
+                                                        <td className="border p-2 text-center">{q.answer}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                         {saQuestions.length > 0 && (
+                            <div className="mb-6">
+                                <p className="font-semibold mb-2">III. Trả lời ngắn</p>
+                                {saQuestions.map((q) => (
+                                    <div key={q.id} className="mb-1"><b>Câu {++answerCounter}:</b> <MathRenderer content={q.answer}/></div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
     
                 {essayQuestions.length > 0 && (
                      <div className="mb-8">
-                        <p className="font-bold mb-2">PHẦN TỰ LUẬN</p>
+                        <p className="font-bold mb-2">B. PHẦN TỰ LUẬN ({formatPoints(essayPoints)} điểm)</p>
                          <div className="space-y-4">
-                            {essayQuestions.map((q, index) => {
+                            {essayQuestions.map((q) => {
                                 const formattedAnswer = q.answer
                                     .trim()
                                     .split('- ')
@@ -933,7 +993,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                     .join('<br />');
                                 return (
                                  <div key={q.id}>
-                                    <p><b>Câu {mcQuestions.length + tfQuestions.length + saQuestions.length + index + 1}:</b></p>
+                                    <p><b>Câu {++answerCounter}:</b></p>
                                     <div className="pl-4"><MathRenderer content={formattedAnswer} /></div>
                                 </div>
                                 );

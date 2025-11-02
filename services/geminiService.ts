@@ -118,9 +118,9 @@ const questionSchema = {
     options: {
       type: Type.ARRAY,
       items: { type: Type.STRING },
-      description: 'An array of options. For Multiple Choice, it MUST contain EXACTLY 4 options. For True/False, it MUST contain EXACTLY 2 options: ["Đúng", "Sai"] (or ["True", "False"] for English). For other types, it MUST be an empty array.'
+      description: 'An array of options. For Multiple Choice, it MUST contain EXACTLY 4 options. For True/False, it MUST contain EXACTLY 4 options. For other types, it MUST be an empty array.'
     },
-    answer: { type: Type.STRING, description: 'The correct answer. For Multiple Choice and True/False questions, it MUST be the letter of the correct option (e.g., "A", "B"). For True/False, "A" corresponds to the first option ("Đúng"/"True") and "B" to the second. For essays/short answer, provide a brief model answer or key points.' },
+    answer: { type: Type.STRING, description: 'The correct answer. For Multiple Choice and True/False questions, it MUST be the letter of the correct option (e.g., "A", "B", "C", or "D"). For essays/short answer, provide a brief model answer or key points.' },
   },
   required: ['text', 'type', 'level', 'answer', 'learningObjective']
 };
@@ -166,9 +166,10 @@ const objectiveSpecSchema = {
     type: Type.OBJECT,
     properties: {
         learningObjective: { type: Type.STRING, description: 'The specific learning objective ("Yêu cầu cần đạt") in Vietnamese.' },
+        specificCompetency: { type: Type.STRING, description: 'The specific competency ("Năng lực đặc thù") this objective addresses, in Vietnamese. For example: "Năng lực tư duy và lập luận toán học", "Năng lực ngôn ngữ".' },
         counts: objectiveCountsSchema
     },
-    required: ['learningObjective', 'counts']
+    required: ['learningObjective', 'specificCompetency', 'counts']
 };
 
 const specTopicSchema = {
@@ -349,7 +350,7 @@ export const generateSpecification = async (
     const prompt = `
         ${promptIntro}
         For each topic provided, you must:
-        1. ${objectiveInstruction} There can be one or more objectives per topic.
+        1. ${objectiveInstruction} There can be one or more objectives per topic. For each objective, you MUST also provide a corresponding 'specificCompetency' ("Năng lực đặc thù cần đạt"). This competency describes the skill the student demonstrates (e.g., "Năng lực tư duy và lập luận toán học", "Năng lực ngôn ngữ"). This field is mandatory.
         2. Distribute the required number of questions for that topic among the learning objectives you've created.
         3. The total number of questions for each type/level, when summed across all objectives within a topic, MUST EXACTLY MATCH the numbers provided for that topic in the input. Do not add or remove any questions.
 
@@ -434,18 +435,17 @@ const generateQuestionsForObjective = async (
         : `For Essay questions, provide a detailed model answer. The answer MUST be structured as a list of bullet points (using '-'). Each bullet point should represent a key idea or a part of the solution. You MUST suggest a reasonable point value for each bullet point, formatted like this: "- [Nội dung chính] (0.25 điểm)".`;
 
     const latexInstruction = `
-        - CRITICAL: For ALL mathematical and chemical expressions, you MUST use standard, correct LaTeX syntax enclosed in \\(...\\) for inline math.
-        - Use standard LaTeX commands for all mathematical notation. For example: \\(x^2\\) for exponents, \\(\\sqrt{16}\\) for square roots, \\(\\frac{a}{b}\\) for fractions. Do not use plain text for these.
-        - For chemical formulas and equations, you MUST use the mhchem extension syntax (e.g., \\ce{H2O}, \\ce{Fe^{3+}}, \\ce{2H2 + O2 -> 2H2O}) INSIDE the standard \\(...\\) delimiters.
+        - CRITICAL: For ALL mathematical and chemical expressions, you MUST use standard, correct LaTeX syntax.
+        - For INLINE math (expressions within a paragraph), enclose them in \\(...\\).
+        - For DISPLAY math (formulas on their own line), enclose them in $$...$$.
+        - Use standard LaTeX commands: \\(x^2\\) for exponents, \\(\\sqrt{16}\\) for square roots, \\(\\frac{a}{b}\\) for fractions.
+        - For chemical formulas, use the mhchem extension syntax (e.g., \\ce{H2O}, \\ce{Fe^{3+}}, \\ce{2H2 + O2 -> 2H2O}) INSIDE the LaTeX delimiters.
         - This applies to the 'text', 'options', and 'answer' fields.
-        - IMPORTANT: The backslashes in the delimiters MUST be correctly escaped for the final JSON output.
-          - Math Example (exponent): "Giá trị của \\(3^4\\) là bao nhiêu?"
-          - Math Example (fraction): "Kết quả của phép tính \\(-\\frac{3}{8} + \\frac{5}{6}\\) là"
-          - Math Example (square root): "Căn bậc hai của 81 là \\(\\sqrt{81}\\)."
-          - Chemistry Example (formula): "Công thức của nước là \\(\\ce{H2O}\\)"
-          - Chemistry Example (ion): "ion Sắt(III) được viết là \\(\\ce{Fe^{3+}}\\)"
-          - Chemistry Example (equation): "Phản ứng \\(\\ce{2H2 + O2 -> 2H2O}\\)"
-        - IMPORTANT: Do NOT use LaTeX for simple numbers or plain text (e.g., "Câu 1", "3,0 điểm", "năm 2024"). Only use it for formulas, equations, and mathematical notations.
+        - The backslashes in the delimiters MUST be correctly escaped for the final JSON output.
+          - Inline Example: "Giá trị của \\(3^4\\) là bao nhiêu?"
+          - Display Example: A question asking for a formula might have "$$\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$" on its own line in the 'text' field.
+          - Chemistry Example: "Công thức của nước là \\(\\ce{H2O}\\)"
+        - IMPORTANT: Do NOT use LaTeX for simple numbers or plain text (e.g., "Câu 1", "3,0 điểm"). Only use it for formulas, equations, and mathematical notations.
     `;
     
     const basePrompt = `
@@ -458,7 +458,10 @@ const generateQuestionsForObjective = async (
         - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
         ${isEnglishSubject ? '' : latexInstruction}
         - For Multiple Choice questions, the 'options' field MUST be an array with EXACTLY 4 distinct strings. The 'answer' field MUST be the letter of the correct option (e.g., "A").
-        - For True/False questions, the 'options' field MUST be an array with EXACTLY 2 strings: ["Đúng", "Sai"] (or ["True", "False"] for English). The 'answer' field MUST be the letter of the correct option ("A" if the statement is true, "B" if it is false).
+        - For True/False questions:
+          - The question 'text' MUST ask the user to identify the correct or incorrect statement from the options. For example: "Chọn phát biểu đúng" (Choose the correct statement) or "Phát biểu nào sau đây là sai?" (Which of the following statements is incorrect?).
+          - The 'options' field MUST be an array with EXACTLY 4 distinct declarative statements that can be evaluated as true or false. One of these statements is the correct answer based on the question text (e.g., it's the only true statement if the question asks for the correct one), and the other three are distractors.
+          - The 'answer' field MUST be the letter of the correct option (e.g., "A", "B", "C", or "D").
         - For Short Answer, provide a concise model answer.
         - ${essayAnswerInstruction}
         - The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.

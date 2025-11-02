@@ -114,6 +114,7 @@ export interface InitialAnalysisResult {
 // New types for the Specification
 export interface ObjectiveSpec {
   learningObjective: string;
+  specificCompetency: string;
   counts: Partial<TopicConfig>;
 }
 
