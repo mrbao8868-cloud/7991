@@ -207,17 +207,28 @@ function App() {
             />
 
             <header className="no-print shadow-md bg-white">
+                {/* Top bar with Logo, Title, and Banner Info */}
                 <div className="bg-slate-800 text-white">
-                    <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                    <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+                        {/* Left side: Logo and Title */}
+                        <div className="flex items-center gap-3 py-3">
                             <BalDigitechLogo className="h-8 w-8 text-white" />
                             <h1 className="text-lg font-semibold">Ứng dụng tạo đề thi theo công văn 7991</h1>
                         </div>
-                        <button onClick={() => setIsApiModalOpen(true)} title="Quản lý API Key" className="p-2 rounded-full hover:bg-slate-700 transition-colors">
-                            <LockClosedIcon className="w-5 h-5 text-slate-300"/>
-                        </button>
+
+                        {/* Right side: Banner Info */}
+                        <div className="hidden lg:block text-right">
+                            <h2 className="text-base font-bold tracking-wide text-white">Trung tâm Tin học ứng dụng Bal Digitech</h2>
+                            <div className="text-xs mt-1 flex justify-end items-center gap-x-4 text-slate-300">
+                                <span><strong>Cung cấp:</strong> Tài khoản Canva, ứng dụng hỗ trợ giáo viên.</span>
+                                <span><strong>Đào tạo:</strong> AI, E-learning, ứng dụng AI trong giáo dục.</span>
+                                <span><strong>Liên hệ:</strong> 0972.300.864 - Thầy Giới</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
+
+                {/* Status bar */}
                 <div className="bg-primary-700 text-primary-50">
                     <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 h-10 flex items-center">
                         <SparkleIcon className="w-5 h-5 mr-2 flex-shrink-0"/>
@@ -230,9 +241,20 @@ function App() {
                 {renderContent()}
             </main>
 
-            <footer className="bg-slate-800 text-slate-400 text-xs text-center p-3 no-print mt-auto">
-                <p>Trung tâm Tin học ứng dụng Bal Digitech | ĐT: 0972.300.864 - Thầy Giới</p>
-                <p className="mt-1">&copy; {new Date().getFullYear()} - Ứng dụng được phát triển bởi Thầy Giới.</p>
+            <footer className="bg-slate-800 text-slate-400 text-xs p-3 no-print mt-auto">
+                <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
+                    <div className="text-center sm:text-left">
+                        <p>Trung tâm Tin học ứng dụng Bal Digitech | ĐT: 0972.300.864 - Thầy Giới</p>
+                        <p className="mt-1">&copy; {new Date().getFullYear()} - Ứng dụng được phát triển bởi Thầy Giới.</p>
+                    </div>
+                    <button 
+                        onClick={() => setIsApiModalOpen(true)} 
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors text-slate-300 hover:text-white"
+                    >
+                        <LockClosedIcon className="w-4 h-4"/>
+                        <span className="font-medium">Quản lý API Key</span>
+                    </button>
+                </div>
             </footer>
         </div>
     );
