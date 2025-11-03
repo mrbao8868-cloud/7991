@@ -393,16 +393,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     td, th {
                         padding: 4px;
                     }
-                    .exam-question-options-table { 
-                        width: 100%; 
-                        border: none;
-                    }
-                    .exam-question-options-table td { 
-                        width: 50%; 
-                        vertical-align: top; 
-                        padding: 4px 0; 
-                        border: none;
-                    }
                     .break-before-page {
                         page-break-before: always;
                     }
@@ -762,9 +752,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                  <table style={{ width: '100%', border: 'none', fontFamily: 'Times New Roman, serif', fontSize: '13pt' }}>
                     <tbody>
                         <tr>
-                            <td style={{ textAlign: 'center', fontWeight: 'bold', width: '50%', verticalAlign: 'top', paddingBottom: '1em' }}>
-                                {examConfig.schoolName.toUpperCase()}<br />
-                                {examConfig.departmentName.toUpperCase()}
+                            <td style={{ textAlign: 'center', width: '50%', verticalAlign: 'top', paddingBottom: '1em' }}>
+                                <div style={{ textTransform: 'uppercase' }}>{examConfig.schoolName}</div>
+                                <div style={{ fontWeight: 'bold', textTransform: 'uppercase', borderBottom: '1px solid black', display: 'inline-block', paddingBottom: '2px', minWidth: '200px' }}>{examConfig.departmentName}</div>
                             </td>
                             <td style={{ textAlign: 'center', fontWeight: 'bold', width: '50%', verticalAlign: 'top', paddingBottom: '1em' }}>
                                 {examConfig.examTime.toUpperCase()}<br />
@@ -795,20 +785,14 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <p className="font-bold mb-2">I. Trắc nghiệm nhiều lựa chọn</p>
                                 {mcQuestions.map(q => (
                                     <div key={q.id} className="mb-4 exam-question">
-                                        <p><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
+                                        <p style={{marginBottom: '0.25em'}}><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
                                         {Array.isArray(q.options) && q.options.length === 4 && (
-                                            <table className="exam-question-options-table mt-2 w-full border-collapse">
-                                                <tbody>
-                                                    <tr>
-                                                        <td className="w-1/2 pr-4 align-top"><b>A. </b><MathRenderer content={q.options[0]} /></td>
-                                                        <td className="w-1/2 pl-4 align-top"><b>B. </b><MathRenderer content={q.options[1]} /></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td className="w-1/2 pr-4 align-top pt-1"><b>C. </b><MathRenderer content={q.options[2]} /></td>
-                                                        <td className="w-1/2 pl-4 align-top pt-1"><b>D. </b><MathRenderer content={q.options[3]} /></td>
-                                                    </tr>
-                                                </tbody>
-                                            </table>
+                                            <div style={{ paddingLeft: '1em' }}>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>A. </b><MathRenderer content={q.options[0]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>B. </b><MathRenderer content={q.options[1]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>C. </b><MathRenderer content={q.options[2]} /></p>
+                                                <p style={{ display: 'block' }}><b>D. </b><MathRenderer content={q.options[3]} /></p>
+                                            </div>
                                         )}
                                     </div>
                                 ))}
@@ -820,20 +804,14 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <p className="font-bold mb-2">II. Câu hỏi đúng sai</p>
                                 {tfQuestions.map(q => (
                                     <div key={q.id} className="mb-4 exam-question">
-                                        <p><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
+                                        <p style={{marginBottom: '0.25em'}}><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
                                         {Array.isArray(q.options) && q.options.length === 4 && (
-                                            <table className="exam-question-options-table mt-2 w-full border-collapse">
-                                                <tbody>
-                                                    <tr>
-                                                        <td className="w-1/2 pr-4 align-top"><b>A. </b><MathRenderer content={q.options[0]} /></td>
-                                                        <td className="w-1/2 pl-4 align-top"><b>B. </b><MathRenderer content={q.options[1]} /></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td className="w-1/2 pr-4 align-top pt-1"><b>C. </b><MathRenderer content={q.options[2]} /></td>
-                                                        <td className="w-1/2 pl-4 align-top pt-1"><b>D. </b><MathRenderer content={q.options[3]} /></td>
-                                                    </tr>
-                                                </tbody>
-                                            </table>
+                                            <div style={{ paddingLeft: '1em' }}>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>A. </b><MathRenderer content={q.options[0]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>B. </b><MathRenderer content={q.options[1]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>C. </b><MathRenderer content={q.options[2]} /></p>
+                                                <p style={{ display: 'block' }}><b>D. </b><MathRenderer content={q.options[3]} /></p>
+                                            </div>
                                         )}
                                     </div>
                                 ))}

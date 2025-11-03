@@ -202,7 +202,7 @@ export const analyzeDocumentCover = async (
         You are an AI assistant for Vietnamese educators. Analyze the provided image, which is the cover page of an educational document.
         Your task is to extract the following information and return it as a single, valid JSON object:
         1.  'subjects': Identify all distinct subjects mentioned. If it's a combined document (e.g., "Lịch sử và Địa lí"), return an array like ["Lịch sử", "Địa lí"]. If only one subject is found, return an array with that single subject.
-        2.  'examTitle': Suggest a suitable exam title. It is usually written in uppercase at the top. For example, 'KIỂM TRA GIỮA HỌC KỲ I'.
+        2.  'examTitle': Suggest a suitable exam title. It is usually written in uppercase at the top. For example, 'KIỂM TRA GIỮA HỌC KỲ I'. Crucially, you must IGNORE document-specific headers that are not exam titles, such as 'MỤC LỤC' (Table of Contents), 'ĐÁP ÁN' (Answer Key), 'BẢN ĐẶC TẢ' (Specification), or 'CHUYÊN ĐỀ' (Thematic Unit). The title should describe the type of assessment.
         3.  'schoolName': Identify the name of the school or the superior educational department. E.g., 'SỞ GD&ĐT LÀO CAI'.
         4.  'departmentName': Identify the specific school name or department name if available. E.g., 'TRƯỜNG THPT SỐ 3 BẢO THẮNG'. If not present, you can return the same as schoolName.
         
@@ -456,6 +456,7 @@ const generateQuestionsForObjective = async (
 
         CRITICAL GUIDELINES FOR EACH QUESTION:
         - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
+        - IMPORTANT: For multiple-choice and true/false options, provide ONLY the text of the option. DO NOT include the option letter (e.g., "A.", "B.", "C.") in the option string itself. The application will add these letters automatically.
         ${isEnglishSubject ? '' : latexInstruction}
         - For Multiple Choice questions, the 'options' field MUST be an array with EXACTLY 4 distinct strings. The 'answer' field MUST be the letter of the correct option (e.g., "A").
         - For True/False questions:

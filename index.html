@@ -12,9 +12,20 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.mjs" type="module"></script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-n/mZmB2bOPDsjUYHnLrUECALQbOdEzuxpIWErMLcrL6RcEImkkYdgLImO1iAJAoM" crossorigin="anonymous">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7FO8CEfgGvoM9qCtawZgYhVSD2MBM3rQoHTebgdpR+IuTE2r0I9Pnsaxrfqt8I0w" crossorigin="anonymous"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/mhchem.min.js" integrity="sha384-LIgAiYlT5hPOp2+cL+1G9nBkiDHYpquM4D2DqslS2J4uQv8V8hA/Y/13gO5Ggq3d" crossorigin="anonymous"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0Y_cvoHUpFlABd_gTXnoWLTb53vGrANrqeUpoS5rJzqcBDIWLZBOa7a+o" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7FO8CEfgGvoM9qCtawZgYhVSD2MBM3rQoHTebgdpR+IuTE2r0I9Pnsaxrfqt8I0w" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/mhchem.min.js" integrity="sha384-LIgAiYlT5hPOp2+cL+1G9nBkiDHYpquM4D2DqslS2J4uQv8V8hA/Y/13gO5Ggq3d" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0Y_cvoHUpFlABd_gTXnoWLTb53vGrANrqeUpoS5rJzqcBDIWLZBOa7a+o" crossorigin="anonymous"></script>
+    <script>
+      // This script runs after auto-render.js is supposed to have loaded.
+      // It first VERIFIES that the render function exists before signaling readiness.
+      // This prevents errors if the auto-render script fails to load from the CDN.
+      if (typeof renderMathInElement === 'function') {
+        window.KATE_IS_READY = true;
+        document.dispatchEvent(new CustomEvent('katex-ready'));
+      } else {
+        console.error("KaTeX auto-render script failed to load or did not define 'renderMathInElement'. Math formulas will not be rendered.");
+      }
+    </script>
 
     <style>
       body {
