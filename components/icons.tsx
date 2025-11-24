@@ -97,3 +97,9 @@ export const QuestionMarkCircleIcon: React.FC<{ className?: string }> = ({ class
         <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM8.94 6.94a.75.75 0 11-1.06-1.061 3.5 3.5 0 111.06 1.061zM10 11a.75.75 0 01.75.75v.008a.75.75 0 01-1.5 0V11.75A.75.75 0 0110 11z" clipRule="evenodd" />
     </svg>
 );
+
+export const UserIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className || "w-5 h-5"}>
+        <path d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.25 1.25 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" />
+    </svg>
+);

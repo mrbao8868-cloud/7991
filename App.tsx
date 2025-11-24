@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { ExamConfig, InitialAnalysisResult, GenerationOptions } from './types';
-import { BalDigitechLogo, LockClosedIcon, SparkleIcon } from './components/icons';
+import { BalDigitechLogo, LockClosedIcon, SparkleIcon, ArrowTopRightOnSquareIcon } from './components/icons';
 import ApiKeyManagerModal from './components/ApiKeyManagerModal';
 import ConfigurationScreen from './components/ConfigurationScreen';
 import ApiKeyPromptScreen from './components/ApiKeyPromptScreen';
 import ExamWorkspace from './components/ExamWorkspace';
 import UploadScreen from './components/UploadScreen';
+import LoginScreen from './components/LoginScreen';
 
 type AppStage = 'upload' | 'configure' | 'workspace';
 
 function App() {
+    // Authentication State
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+
     // App readiness and flow state
     const [isAppReady, setIsAppReady] = useState(false);
     const [appStage, setAppStage] = useState<AppStage>('upload');
@@ -28,27 +32,35 @@ function App() {
     // Centralized state for the status bar message
     const [statusMessage, setStatusMessage] = useState('');
 
-    // Load API keys from localStorage on initial render
+    // Load API keys and Auth status from localStorage on initial render
     useEffect(() => {
         try {
+            // Check Auth
+            const storedAuth = localStorage.getItem('isAuthenticated');
+            if (storedAuth === 'true') {
+                setIsAuthenticated(true);
+            }
+
             const storedKeys = localStorage.getItem('apiKeys');
             const storedActiveKey = localStorage.getItem('activeApiKey');
             const keys = storedKeys ? JSON.parse(storedKeys) : [];
             setApiKeys(keys);
             
+            const hasEnoughKeys = keys.length >= 4;
+
             if (storedActiveKey && keys.includes(storedActiveKey)) {
                 setActiveApiKey(storedActiveKey);
-                setIsAppReady(true);
+                setIsAppReady(hasEnoughKeys);
             } else if (keys.length > 0) {
                 const newActive = keys[0];
                 setActiveApiKey(newActive);
                 localStorage.setItem('activeApiKey', newActive);
-                setIsAppReady(true);
+                setIsAppReady(hasEnoughKeys);
             } else {
                 setIsAppReady(false);
             }
         } catch (error) {
-            console.error("Failed to parse API keys from localStorage", error);
+            console.error("Failed to parse data from localStorage", error);
             localStorage.removeItem('apiKeys');
             localStorage.removeItem('activeApiKey');
         }
@@ -57,7 +69,8 @@ function App() {
     // Effect to manage the main status message based on app state
     useEffect(() => {
         if (!isAppReady) {
-            setStatusMessage('Vui lòng thêm và chọn một API Key để bắt đầu.');
+            const remaining = Math.max(0, 4 - apiKeys.length);
+            setStatusMessage(`Vui lòng thêm ${remaining} API Key nữa để bắt đầu (Yêu cầu tối thiểu 4).`);
         } else {
             switch(appStage) {
                 case 'upload':
@@ -72,15 +85,34 @@ function App() {
                     break;
             }
         }
-    }, [isAppReady, appStage]);
+    }, [isAppReady, appStage, apiKeys]);
     
+    const handleLoginSuccess = () => {
+        setIsAuthenticated(true);
+        localStorage.setItem('isAuthenticated', 'true');
+    };
+
+    const handleLogout = () => {
+        setIsAuthenticated(false);
+        localStorage.removeItem('isAuthenticated');
+        // Optional: Reset other states if needed
+        resetState();
+    };
+
     const handleAddApiKey = (key: string) => {
         if (key && !apiKeys.includes(key)) {
             const newKeys = [...apiKeys, key];
             setApiKeys(newKeys);
             localStorage.setItem('apiKeys', JSON.stringify(newKeys));
+            
             if (!activeApiKey) {
-                handleSetActiveApiKey(key, false); // Don't close modal on first key add
+                setActiveApiKey(key);
+                localStorage.setItem('activeApiKey', key);
+                setApiKeyError(null);
+            }
+
+            if (newKeys.length >= 4) {
+                setIsAppReady(true);
             }
         }
     };
@@ -90,6 +122,10 @@ function App() {
         setApiKeys(newKeys);
         localStorage.setItem('apiKeys', JSON.stringify(newKeys));
         
+        if (newKeys.length < 4) {
+            setIsAppReady(false);
+        }
+
         if (activeApiKey === keyToDelete) {
             const newActiveKey = newKeys.length > 0 ? newKeys[0] : null;
             setActiveApiKey(newActiveKey);
@@ -97,7 +133,7 @@ function App() {
                 localStorage.setItem('activeApiKey', newActiveKey);
             } else {
                 localStorage.removeItem('activeApiKey');
-                setIsAppReady(false); // No keys left, app is not ready
+                // isAppReady handled by length check above
             }
         }
     };
@@ -107,7 +143,10 @@ function App() {
         localStorage.setItem('activeApiKey', key);
         setApiKeyError(null);
         if(closeModal) setIsApiModalOpen(false);
-        setIsAppReady(true);
+        
+        if (apiKeys.length >= 4) {
+            setIsAppReady(true);
+        }
     };
 
     const handleApiKeyError = (message?: string) => {
@@ -192,18 +231,23 @@ function App() {
         }
     };
 
+    // If not authenticated, show Login Screen
+    if (!isAuthenticated) {
+        return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    }
+
     return (
         <div className="bg-slate-100 min-h-screen flex flex-col">
             <ApiKeyManagerModal
                 isOpen={isApiModalOpen || !isAppReady}
-                onClose={() => { if (apiKeys.length > 0) setIsApiModalOpen(false) }}
+                onClose={() => { if (apiKeys.length >= 4) setIsApiModalOpen(false) }}
                 keys={apiKeys}
                 activeKey={activeApiKey}
                 onAddKey={handleAddApiKey}
                 onDeleteKey={handleDeleteApiKey}
                 onSetActiveKey={handleSetActiveApiKey}
                 errorMessage={apiKeyError}
-                isClosable={apiKeys.length > 0}
+                isClosable={apiKeys.length >= 4}
             />
 
             <header className="no-print shadow-md bg-white">
@@ -247,13 +291,22 @@ function App() {
                         <p>Trung tâm Tin học ứng dụng Bal Digitech | ĐT: 0972.300.864 - Thầy Giới</p>
                         <p className="mt-1">&copy; {new Date().getFullYear()} - Ứng dụng được phát triển bởi Thầy Giới.</p>
                     </div>
-                    <button 
-                        onClick={() => setIsApiModalOpen(true)} 
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors text-slate-300 hover:text-white"
-                    >
-                        <LockClosedIcon className="w-4 h-4"/>
-                        <span className="font-medium">Quản lý API Key</span>
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button 
+                            onClick={handleLogout}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors text-slate-300 hover:text-white"
+                        >
+                            <ArrowTopRightOnSquareIcon className="w-4 h-4" />
+                            <span className="font-medium">Đăng xuất</span>
+                        </button>
+                        <button 
+                            onClick={() => setIsApiModalOpen(true)} 
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-slate-700 transition-colors text-slate-300 hover:text-white"
+                        >
+                            <LockClosedIcon className="w-4 h-4"/>
+                            <span className="font-medium">Quản lý API Key ({apiKeys.length})</span>
+                        </button>
+                    </div>
                 </div>
             </footer>
         </div>
