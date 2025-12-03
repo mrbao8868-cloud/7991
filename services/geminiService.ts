@@ -111,16 +111,16 @@ const analysisResponseSchema = {
 const questionSchema = {
   type: Type.OBJECT,
   properties: {
-    text: { type: Type.STRING, description: 'The question text in Vietnamese.' },
+    text: { type: Type.STRING, description: 'The question text/stem in Vietnamese.' },
     learningObjective: { type: Type.STRING, description: 'The specific learning objective ("Yêu cầu cần đạt") this question assesses, in Vietnamese. Must match the requested objective.' },
     type: { type: Type.STRING, enum: Object.values(QuestionType), description: 'The type of question.' },
     level: { type: Type.STRING, enum: Object.values(CognitiveLevel), description: 'The cognitive level of the question.' },
     options: {
       type: Type.ARRAY,
       items: { type: Type.STRING },
-      description: 'An array of options. For Multiple Choice, it MUST contain EXACTLY 4 options. For True/False, it MUST contain EXACTLY 4 options. For other types, it MUST be an empty array.'
+      description: 'An array of options. For Multiple Choice, it MUST contain EXACTLY 4 options. For True/False, it MUST contain EXACTLY 4 statements (sub-questions). For other types, it MUST be an empty array.'
     },
-    answer: { type: Type.STRING, description: 'The correct answer. For Multiple Choice and True/False questions, it MUST be the letter of the correct option (e.g., "A", "B", "C", or "D"). For essays/short answer, provide a brief model answer or key points.' },
+    answer: { type: Type.STRING, description: 'The correct answer. For Multiple Choice, it is the letter (A, B, C, D). For True/False, it MUST be a string specifying True/False for each option (e.g., "a) Đ, b) S, c) Đ, d) S"). For essays, provide a model answer.' },
   },
   required: ['text', 'type', 'level', 'answer', 'learningObjective']
 };
@@ -458,15 +458,27 @@ const generateQuestionsForObjective = async (
         - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
         - IMPORTANT: For multiple-choice and true/false options, provide ONLY the text of the option. DO NOT include the option letter (e.g., "A.", "B.", "C.") in the option string itself. The application will add these letters automatically.
         ${isEnglishSubject ? '' : latexInstruction}
-        - For Multiple Choice questions, the 'options' field MUST be an array with EXACTLY 4 distinct strings. The 'answer' field MUST be the letter of the correct option (e.g., "A").
-        - For True/False questions:
-          - The question 'text' MUST ask the user to identify the correct or incorrect statement from the options. For example: "Chọn phát biểu đúng" (Choose the correct statement) or "Phát biểu nào sau đây là sai?" (Which of the following statements is incorrect?).
-          - The 'options' field MUST be an array with EXACTLY 4 distinct declarative statements that can be evaluated as true or false. One of these statements is the correct answer based on the question text (e.g., it's the only true statement if the question asks for the correct one), and the other three are distractors.
-          - The 'answer' field MUST be the letter of the correct option (e.g., "A", "B", "C", or "D").
-        - For Short Answer, provide a concise model answer.
-        - ${essayAnswerInstruction}
-        - The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
+        
+        **FORMAT GUIDELINES BY QUESTION TYPE:**
+        1. **Multiple Choice (Trắc nghiệm nhiều lựa chọn):**
+           - 'options': EXACTLY 4 distinct strings.
+           - 'answer': The letter of the correct option (e.g., "A").
 
+        2. **True/False (Trắc nghiệm Đúng/Sai):**
+           - The 'text' field must be the main context/stem (e.g., a statement, a math problem, or a data set) belonging to the lesson "${topicName}".
+           - The 'options' array MUST contain EXACTLY 4 distinct sub-statements (a, b, c, d) related to that context.
+           - The 'answer' field MUST specify the Truth value for EACH option in a readable string format like: "a) Đúng, b) Sai, c) Đúng, d) Sai".
+           - **CRITICAL RANDOMIZATION RULE:** You MUST randomly configure the 4 options so that the number of "True" statements is randomly chosen to be **1, 2, or 3**. Do NOT always make it 1 True/3 False. Do NOT always make it 2 True/2 False. Vary it.
+           - All 4 statements must strictly relate to the provided context and lesson content.
+
+        3. **Short Answer (Trả lời ngắn):**
+           - 'options': Empty array.
+           - 'answer': A concise model answer.
+
+        4. **Essay (Tự luận):**
+           - ${essayAnswerInstruction}
+
+        The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
         Return a single JSON array containing all the generated question objects.
     `;
     

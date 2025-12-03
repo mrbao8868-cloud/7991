@@ -807,10 +807,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                         <p style={{marginBottom: '0.25em'}}><b>Câu {++questionCounter}: </b><MathRenderer content={q.text} /></p>
                                         {Array.isArray(q.options) && q.options.length === 4 && (
                                             <div style={{ paddingLeft: '1em' }}>
-                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>A. </b><MathRenderer content={q.options[0]} /></p>
-                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>B. </b><MathRenderer content={q.options[1]} /></p>
-                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>C. </b><MathRenderer content={q.options[2]} /></p>
-                                                <p style={{ display: 'block' }}><b>D. </b><MathRenderer content={q.options[3]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>a) </b><MathRenderer content={q.options[0]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>b) </b><MathRenderer content={q.options[1]} /></p>
+                                                <p style={{ display: 'block', marginBottom: '0.25em' }}><b>c) </b><MathRenderer content={q.options[2]} /></p>
+                                                <p style={{ display: 'block' }}><b>d) </b><MathRenderer content={q.options[3]} /></p>
                                             </div>
                                         )}
                                     </div>
@@ -908,7 +908,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                         {tfQuestions.length > 0 && (
                             <div className="mb-6">
                                 <p className="font-semibold mb-2">II. Câu hỏi đúng sai</p>
-                                <div className="flex justify-center space-x-16">
+                                <div className="flex justify-center space-x-4">
                                     <table className="w-auto border-collapse">
                                         <thead>
                                             <tr>
@@ -919,8 +919,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                         <tbody>
                                             {tfAnswersCol1.map((q) => (
                                                 <tr key={q.id}>
-                                                    <td className="border p-2 text-center">{++answerCounter}</td>
-                                                    <td className="border p-2 text-center">{q.answer}</td>
+                                                    <td className="border p-2 text-center align-middle" style={{width: '60px'}}>{++answerCounter}</td>
+                                                    <td className="border p-2 text-left text-sm align-middle" style={{minWidth: '200px'}}>
+                                                       {q.answer.replace(/,\s*/g, ', ')}
+                                                    </td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -936,8 +938,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                             <tbody>
                                                 {tfAnswersCol2.map((q) => (
                                                     <tr key={q.id}>
-                                                        <td className="border p-2 text-center">{++answerCounter}</td>
-                                                        <td className="border p-2 text-center">{q.answer}</td>
+                                                        <td className="border p-2 text-center align-middle" style={{width: '60px'}}>{++answerCounter}</td>
+                                                        <td className="border p-2 text-left text-sm align-middle" style={{minWidth: '200px'}}>
+                                                            {q.answer.replace(/,\s*/g, ', ')}
+                                                        </td>
                                                     </tr>
                                                 ))}
                                             </tbody>
