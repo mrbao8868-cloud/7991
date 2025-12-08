@@ -1,9 +1,9 @@
+
 import React, { useRef, useState, useEffect } from 'react';
-import Spinner from './Spinner';
-import { DocumentArrowUpIcon, CheckIcon, SparkleIcon, ExclamationTriangleIcon, ArrowTopRightOnSquareIcon } from './icons';
-import { InitialAnalysisResult, RateLimitError, ApiKeyRequiredError, GenerationOptions } from '../types';
+import { DocumentArrowUpIcon, CheckIcon, SparkleIcon, ExclamationTriangleIcon, ArrowTopRightOnSquareIcon, DocumentTextIcon } from './icons';
+import { InitialAnalysisResult, RateLimitError, ApiKeyRequiredError, GenerationOptions, TocItem } from '../types';
 import { processPdfToImages } from '../utils/pdfProcessor';
-import { analyzeDocumentCover } from '../services/geminiService';
+import { analyzeDocumentCover, extractTableOfContents } from '../services/geminiService';
 
 interface UploadScreenProps {
     apiKeys: string[];
@@ -66,62 +66,27 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     
-    const [startPage, setStartPage] = useState<string>('');
-    const [endPage, setEndPage] = useState<string>('');
-    const [scopeHint, setScopeHint] = useState<string>('');
+    // Workflow State
+    type Step = 'upload' | 'toc_input' | 'processing_toc' | 'selecting_topics' | 'finalizing';
+    const [step, setStep] = useState<Step>('upload');
     
-    const [isProcessing, setIsProcessing] = useState(false);
+    // TOC Input State
+    const [tocStartPage, setTocStartPage] = useState<string>('');
+    const [tocEndPage, setTocEndPage] = useState<string>('');
+
+    // Data State
+    const [tocItems, setTocItems] = useState<TocItem[]>([]);
+    const [selectedTopicIds, setSelectedTopicIds] = useState<Set<string>>(new Set());
+
     const [processingStatus, setProcessingStatus] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [rateLimitError, setRateLimitError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (isProcessing && processingStatus) {
+        if (processingStatus) {
             onStatusUpdate(processingStatus);
         }
-    }, [processingStatus, isProcessing, onStatusUpdate]);
-
-    const handleStartAnalysis = async () => {
-        if (!selectedFile || !activeApiKey) return;
-        
-        setIsProcessing(true);
-        setError(null);
-        setRateLimitError(null);
-        
-        try {
-            setProcessingStatus('Đang xử lý PDF...');
-            const startPageNum = startPage ? parseInt(startPage, 10) : undefined;
-            const endPageNum = endPage ? parseInt(endPage, 10) : undefined;
-            const images = await processPdfToImages(selectedFile, startPageNum, endPageNum);
-
-            setProcessingStatus('AI đang phân tích bìa...');
-            const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            const analysisResult = await analyzeDocumentCover(keysToTry, onSetActiveKey, images[0]);
-            
-            const generationOptions: GenerationOptions = {
-                startPage: startPageNum,
-                endPage: endPageNum,
-                scopeHint: scopeHint.trim() || undefined
-            };
-            
-            onAnalysisComplete(analysisResult, images, generationOptions);
-
-        } catch (e: unknown) {
-            const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
-            onStatusUpdate(`Đã xảy ra lỗi: ${errorMessage}`);
-            if (e instanceof RateLimitError) {
-                setRateLimitError(errorMessage);
-            } else if (e instanceof ApiKeyRequiredError) {
-                onApiKeyError(e.message);
-            }
-            else {
-                setError(errorMessage);
-            }
-        } finally {
-            setIsProcessing(false);
-            setProcessingStatus('');
-        }
-    };
+    }, [processingStatus, onStatusUpdate]);
 
     const handleFileChange = (files: FileList | null) => {
         if (files && files.length > 0) {
@@ -129,9 +94,61 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
                 setSelectedFile(files[0]);
                 setError(null);
                 setRateLimitError(null);
+                setStep('toc_input');
+                // Reset inputs
+                setTocStartPage('');
+                setTocEndPage('');
+                setProcessingStatus('Vui lòng nhập trang chứa Mục lục.');
             } else {
                 setError('Vui lòng chỉ tải lên tệp PDF.');
                 setSelectedFile(null);
+            }
+        }
+    };
+    
+    // Step 2: Analyze ONLY the TOC pages
+    const handleAnalyzeToc = async () => {
+        if (!selectedFile || !activeApiKey) return;
+        
+        const start = parseInt(tocStartPage);
+        const end = parseInt(tocEndPage);
+
+        if (isNaN(start) || isNaN(end) || start < 1 || end < start) {
+            setError('Vui lòng nhập số trang hợp lệ (Trang bắt đầu <= Trang kết thúc).');
+            return;
+        }
+
+        setStep('processing_toc');
+        setError(null);
+        setRateLimitError(null);
+        
+        try {
+            setProcessingStatus(`Đang đọc trang ${start} đến ${end}...`);
+            // Only process the specific TOC pages to save memory and API quota
+            const tocImages = await processPdfToImages(selectedFile, start, end);
+
+            setProcessingStatus('AI đang phân tích cấu trúc Mục lục...');
+            const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
+            
+            const tocResult = await extractTableOfContents(keysToTry, onSetActiveKey, tocImages);
+
+            setTocItems(tocResult);
+            // Default select all
+            setSelectedTopicIds(new Set(tocResult.map(t => t.id)));
+            setStep('selecting_topics');
+            setProcessingStatus('Vui lòng chọn các bài cần kiểm tra.');
+
+        } catch (e: unknown) {
+            const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
+            onStatusUpdate(`Đã xảy ra lỗi: ${errorMessage}`);
+            setStep('toc_input'); // Revert to input on error
+            if (e instanceof RateLimitError) {
+                setRateLimitError(errorMessage);
+            } else if (e instanceof ApiKeyRequiredError) {
+                onApiKeyError(e.message);
+            }
+            else {
+                setError(errorMessage);
             }
         }
     };
@@ -146,101 +163,270 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         handleFileChange(e.dataTransfer.files);
     };
     
-    const processingSteps = [
-        { name: 'Đang xử lý PDF...', title: 'Phân tích tài liệu PDF' },
-        { name: 'AI đang phân tích bìa...', title: 'AI nhận diện thông tin trang bìa' },
-    ];
+    const handleToggleTopic = (id: string) => {
+        const newSelected = new Set(selectedTopicIds);
+        if (newSelected.has(id)) {
+            newSelected.delete(id);
+        } else {
+            newSelected.add(id);
+        }
+        setSelectedTopicIds(newSelected);
+    };
+
+    const handleSelectAll = (select: boolean) => {
+        if (select) {
+            setSelectedTopicIds(new Set(tocItems.map(t => t.id)));
+        } else {
+            setSelectedTopicIds(new Set());
+        }
+    };
+
+    // Step 3: Finalize - Process full document and cover
+    const handleConfirmSelection = async () => {
+        if (!selectedFile || !activeApiKey) return;
+        
+        const selectedTopics = tocItems.filter(t => selectedTopicIds.has(t.id));
+        
+        if (selectedTopics.length === 0) {
+            setError("Vui lòng chọn ít nhất một nội dung để tiếp tục.");
+            return;
+        }
+
+        setStep('finalizing');
+        setProcessingStatus('Đang chuẩn bị dữ liệu nội dung...');
+
+        try {
+            // Now we process the rest of the document (or all of it) so the ExamWorkspace has context
+            // This is done on client side so no API quota used yet
+            const allImages = await processPdfToImages(selectedFile);
+            
+            // Quickly analyze cover (Page 1) for metadata
+            setProcessingStatus('Đang lấy thông tin bìa...');
+            const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
+            
+            // Analyze only the first page for the cover info
+            const coverResult = await analyzeDocumentCover(keysToTry, onSetActiveKey, allImages[0]);
+
+            const generationOptions: GenerationOptions = {
+                selectedTopics: selectedTopics
+            };
+            
+            onAnalysisComplete(coverResult, allImages, generationOptions);
+        } catch (e: unknown) {
+             const errorMessage = e instanceof Error ? e.message : "Lỗi khi xử lý tài liệu.";
+             setError(errorMessage);
+             setStep('selecting_topics');
+             if (e instanceof RateLimitError) {
+                setRateLimitError(errorMessage);
+            } else if (e instanceof ApiKeyRequiredError) {
+                onApiKeyError(e.message);
+            }
+        }
+    };
     
-    const currentStepIndex = processingSteps.findIndex(s => s.name === processingStatus);
+    const groupedToc = tocItems.reduce((acc, item) => {
+        (acc[item.chapter] = acc[item.chapter] || []).push(item);
+        return acc;
+    }, {} as Record<string, TocItem[]>);
 
-    const renderContent = () => {
-        if (isProcessing) {
-            return (
-                <div>
-                    <h3 className="text-xl font-semibold text-slate-800">AI đang phân tích...</h3>
-                    <p className="text-slate-500 mt-2">Vui lòng đợi trong giây lát, AI đang đọc tài liệu của bạn.</p>
-                    <div className="mt-8 flex justify-center">
-                        <div className="inline-flex flex-col items-start space-y-4">
-                           {processingSteps.map((step, index) => (
-                               <ProcessingStep 
-                                   key={step.title}
-                                   title={step.title}
-                                   isCurrent={index === currentStepIndex}
-                                   isCompleted={index < currentStepIndex}
-                               />
-                           ))}
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-        if (rateLimitError) {
-            return (
-                 <RateLimitErrorState 
-                    message={rateLimitError}
-                    onRetry={handleStartAnalysis}
-                />
-            );
-        }
 
+    if (rateLimitError) {
         return (
-            <>
-                <p className="text-slate-600 mb-6">Hãy tải lên tệp PDF chứa nội dung ôn tập hoặc bản đặc tả chi tiết.</p>
-                
-                {!selectedFile ? (
-                    <div
-                        onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
-                        onClick={() => fileInputRef.current?.click()}
-                        className={`p-10 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging ? 'border-primary-500 bg-primary-50' : 'border-slate-300 hover:border-primary-400'}`}
-                    >
-                        <input type="file" ref={fileInputRef} onChange={(e) => handleFileChange(e.target.files)} accept=".pdf" className="hidden" />
-                        <DocumentArrowUpIcon className="mx-auto h-12 w-12 text-slate-400" />
-                        <p className="mt-2 font-semibold text-slate-700">Kéo và thả tệp PDF vào đây</p>
-                        <p className="text-sm text-slate-500">hoặc bấm để chọn tệp</p>
-                    </div>
-                ) : (
-                    <div className="text-left bg-slate-50 border border-slate-200 p-6 rounded-lg">
-                        <div className="flex justify-between items-center">
-                            <p className="font-medium text-slate-800">Đã chọn tệp: <span className="font-bold">{selectedFile.name}</span></p>
-                            <button onClick={() => setSelectedFile(null)} className="text-sm font-medium text-primary-600 hover:text-primary-800">Chọn tệp khác</button>
-                        </div>
-                        
-                        <div className="mt-6 pt-6 border-t border-slate-200">
-                            <h4 className="text-base font-semibold text-slate-800 text-left mb-4">Giới hạn Phạm vi (Tùy chọn)</h4>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
-                                <div>
-                                    <label htmlFor="startPage" className="block text-sm font-medium text-slate-600">Từ trang</label>
-                                    <input type="number" name="startPage" id="startPage" value={startPage} onChange={e => setStartPage(e.target.value)} placeholder="Bỏ trống để bắt đầu từ đầu" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
-                                </div>
-                                <div>
-                                    <label htmlFor="endPage" className="block text-sm font-medium text-slate-600">Đến trang</label>
-                                    <input type="number" name="endPage" id="endPage" value={endPage} onChange={e => setEndPage(e.target.value)} placeholder="Bỏ trống để tới trang cuối" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
-                                </div>
-                            </div>
-                            <div className="mt-4 text-left">
-                                <label htmlFor="scopeHint" className="block text-sm font-medium text-slate-600">Gợi ý nội dung (tùy chọn)</label>
-                                <input type="text" name="scopeHint" id="scopeHint" value={scopeHint} onChange={e => setScopeHint(e.target.value)} placeholder="VD: Chương 3, Thời nhà Lý, Sóng điện từ..." className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm" />
-                                <p className="mt-1 text-xs text-slate-500">Cung cấp gợi ý để AI tập trung vào nội dung cụ thể.</p>
-                            </div>
-                        </div>
-
-                         <div className="mt-6 pt-6 border-t border-slate-200 text-center">
-                            <button onClick={handleStartAnalysis} className="inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500" >
-                                <SparkleIcon className="w-5 h-5 mr-2" />
-                                Bắt đầu Phân tích
-                            </button>
-                        </div>
-                    </div>
-                )}
-                
-                {error && <div className="mt-4 text-sm text-red-600 bg-red-100 p-3 rounded-md text-left">{error}</div>}
-            </>
-        )
+             <RateLimitErrorState 
+                message={rateLimitError}
+                onRetry={() => {
+                    setRateLimitError(null);
+                    setStep('toc_input');
+                }}
+            />
+        );
     }
 
+    // View: 2. Input TOC Pages
+    if (step === 'toc_input') {
+         return (
+            <div className="max-w-xl mx-auto text-center">
+                 <div className="bg-white p-8 rounded-xl shadow-lg border border-slate-200">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-100">
+                        <DocumentTextIcon className="h-6 w-6 text-primary-600" aria-hidden="true" />
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-slate-900">Xác định vị trí Mục lục</h3>
+                    <p className="mt-2 text-sm text-slate-500">
+                        Để tiết kiệm thời gian và hạn ngạch, vui lòng nhập số trang bắt đầu và kết thúc của phần <b>Mục lục</b> trong tài liệu.
+                    </p>
+
+                    <div className="mt-8 grid grid-cols-2 gap-4">
+                        <div className="text-left">
+                            <label htmlFor="startPage" className="block text-sm font-medium text-slate-700">Trang bắt đầu</label>
+                            <input
+                                type="number"
+                                id="startPage"
+                                min="1"
+                                value={tocStartPage}
+                                onChange={(e) => setTocStartPage(e.target.value)}
+                                className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm border px-3 py-2"
+                                placeholder="VD: 2"
+                            />
+                        </div>
+                        <div className="text-left">
+                            <label htmlFor="endPage" className="block text-sm font-medium text-slate-700">Trang kết thúc</label>
+                            <input
+                                type="number"
+                                id="endPage"
+                                min="1"
+                                value={tocEndPage}
+                                onChange={(e) => setTocEndPage(e.target.value)}
+                                className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm border px-3 py-2"
+                                placeholder="VD: 3"
+                            />
+                        </div>
+                    </div>
+                    
+                    {error && <p className="text-red-600 text-sm mt-4">{error}</p>}
+
+                    <div className="mt-8 flex gap-3">
+                        <button
+                            onClick={() => {
+                                setStep('upload');
+                                setSelectedFile(null);
+                            }}
+                            className="flex-1 px-4 py-2 border border-slate-300 shadow-sm text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50"
+                        >
+                            Chọn file khác
+                        </button>
+                        <button
+                            onClick={handleAnalyzeToc}
+                            className="flex-1 px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
+                        >
+                            Phân tích Mục lục
+                        </button>
+                    </div>
+                 </div>
+            </div>
+         );
+    }
+
+    // View: 3. Processing TOC (Spinner)
+    if (step === 'processing_toc') {
+        return (
+            <div className="max-w-3xl mx-auto text-center">
+                <h3 className="text-xl font-semibold text-slate-800">AI đang quét Mục lục...</h3>
+                <p className="text-slate-500 mt-2">Vui lòng đợi trong giây lát.</p>
+                <div className="mt-8 flex justify-center">
+                   <div className="flex items-center space-x-3">
+                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
+                            <SparkleIcon className="w-5 h-5 text-primary-600 animate-pulse" />
+                        </div>
+                        <p className="font-medium text-primary-700">{processingStatus}</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    
+    // View: 5. Finalizing (Spinner)
+    if (step === 'finalizing') {
+        return (
+            <div className="max-w-3xl mx-auto text-center">
+                <h3 className="text-xl font-semibold text-slate-800">Đang khởi tạo môi trường làm việc...</h3>
+                <p className="text-slate-500 mt-2">Ứng dụng đang chuẩn bị nội dung chi tiết cho các bài học đã chọn.</p>
+                <div className="mt-8 flex justify-center">
+                    <div className="flex items-center space-x-3">
+                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
+                            <SparkleIcon className="w-5 h-5 text-primary-600 animate-pulse" />
+                        </div>
+                        <p className="font-medium text-primary-700">{processingStatus}</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // View: 4. Topic Selection
+    if (step === 'selecting_topics') {
+        return (
+            <div className="max-w-4xl mx-auto text-center">
+                 <div className="bg-white p-6 rounded-lg shadow border border-slate-200">
+                    <div className="flex justify-between items-center mb-4">
+                        <div className="text-left">
+                            <h3 className="text-xl font-bold text-slate-800">Kết quả quét Mục lục</h3>
+                            <p className="text-sm text-slate-500">Tích chọn các bài học bạn muốn đưa vào đề thi.</p>
+                        </div>
+                        <div className="space-x-2">
+                             <button onClick={() => handleSelectAll(true)} className="text-sm text-primary-600 hover:text-primary-800 font-medium">Chọn tất cả</button>
+                             <span className="text-slate-300">|</span>
+                             <button onClick={() => handleSelectAll(false)} className="text-sm text-slate-500 hover:text-slate-700">Bỏ chọn</button>
+                        </div>
+                    </div>
+                    
+                    <div className="max-h-[60vh] overflow-y-auto border rounded-md text-left p-4 bg-slate-50 custom-scrollbar">
+                        {Object.keys(groupedToc).length === 0 ? (
+                            <div className="text-center py-8 text-slate-500">
+                                Không tìm thấy mục lục nào. Vui lòng kiểm tra lại tài liệu hoặc số trang đã nhập.
+                            </div>
+                        ) : (
+                            Object.entries(groupedToc).map(([chapter, items]: [string, TocItem[]]) => (
+                                <div key={chapter} className="mb-6 last:mb-0">
+                                    <h4 className="font-bold text-slate-700 mb-2 uppercase text-sm border-b pb-1">{chapter}</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {items.map(item => (
+                                            <label key={item.id} className={`flex items-start p-3 rounded border cursor-pointer transition-colors ${selectedTopicIds.has(item.id) ? 'bg-primary-50 border-primary-200' : 'bg-white border-slate-200 hover:border-primary-300'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedTopicIds.has(item.id)}
+                                                    onChange={() => handleToggleTopic(item.id)}
+                                                    className="h-4 w-4 mt-0.5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                                                />
+                                                <span className="ml-3 text-sm text-slate-700">{item.lessonName}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                    
+                    {error && <p className="text-red-600 text-sm mt-4">{error}</p>}
+
+                    <div className="mt-6 pt-4 border-t flex justify-between items-center">
+                         <button 
+                            onClick={() => {
+                                setStep('toc_input');
+                                setTocItems([]);
+                            }}
+                            className="text-slate-500 hover:text-slate-700 text-sm font-medium"
+                        >
+                            Quét lại trang khác
+                        </button>
+                        <button 
+                            onClick={handleConfirmSelection}
+                            className="inline-flex items-center justify-center px-8 py-2.5 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700"
+                        >
+                            Tiếp tục ({selectedTopicIds.size})
+                        </button>
+                    </div>
+                 </div>
+            </div>
+        );
+    }
+
+    // View: 1. Upload (Initial)
     return (
         <div className="max-w-3xl mx-auto text-center">
-             {renderContent()}
+            <p className="text-slate-600 mb-6">Hãy tải lên tệp PDF. Sau đó bạn có thể chọn trang chứa Mục lục để AI phân tích nhanh.</p>
+            
+            <div
+                onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`p-10 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${isDragging ? 'border-primary-500 bg-primary-50' : 'border-slate-300 hover:border-primary-400'}`}
+            >
+                <input type="file" ref={fileInputRef} onChange={(e) => handleFileChange(e.target.files)} accept=".pdf" className="hidden" />
+                <DocumentArrowUpIcon className="mx-auto h-12 w-12 text-slate-400" />
+                <p className="mt-2 font-semibold text-slate-700">Kéo và thả tệp PDF vào đây</p>
+                <p className="text-sm text-slate-500">hoặc bấm để chọn tệp</p>
+            </div>
+            
+            {error && <div className="mt-4 text-sm text-red-600 bg-red-100 p-3 rounded-md text-left">{error}</div>}
         </div>
     );
 };

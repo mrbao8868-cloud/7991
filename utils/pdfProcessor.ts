@@ -35,7 +35,8 @@ export const processPdfToImages = async (
 
                 for (let i = firstPage; i <= lastPage; i++) {
                     const page = await pdf.getPage(i);
-                    const viewport = page.getViewport({ scale: 1.5 });
+                    // Reduced scale to 1.0 to save API quota on image tokens
+                    const viewport = page.getViewport({ scale: 1.0 });
                     
                     const canvas = document.createElement('canvas');
                     const context = canvas.getContext('2d');
@@ -49,8 +50,8 @@ export const processPdfToImages = async (
 
                     await page.render({ canvasContext: context, viewport: viewport }).promise;
                     
-                    // Reduce image quality to 85% to prevent oversized payloads which can cause network errors.
-                    const base64Image = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+                    // Reduced quality to 0.6 to minimize base64 string size for API transmission
+                    const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
                     images.push(base64Image);
                 }
                 resolve(images);

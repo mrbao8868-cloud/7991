@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec, GenerationOptions } from '../types';
 import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, SparkleIcon, KeyIcon, ChevronDownIcon } from './icons';
@@ -77,7 +78,7 @@ const Stepper: React.FC<{ activeTab: WorkspaceTab; matrixDone: boolean; specDone
     ];
 
     const allSteps = [
-         { id: 'analyze', name: '1. Phân tích', done: true },
+         { id: 'analyze', name: '1. Chọn nội dung', done: true },
          ...steps
     ];
 
@@ -134,7 +135,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
 
     useEffect(() => {
         if (isGeneratingMatrix) {
-            onStatusUpdate('AI đang đọc tài liệu và tạo Ma trận chi tiết...');
+            onStatusUpdate('AI đang tạo Ma trận chi tiết dựa trên nội dung bạn đã chọn...');
             return;
         }
         if (isGeneratingSpec) {
@@ -190,7 +191,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         setMatrixError(null);
         try {
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, documentImages, examConfig, generationOptions?.scopeHint);
+            const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, documentImages, examConfig, generationOptions?.selectedTopics);
             
             if (!examConfig) return;
             setExamTitle(extractedData.examTitle);

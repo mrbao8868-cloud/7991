@@ -1,3 +1,4 @@
+
 // FIX: Removed self-import from this file which caused declaration conflicts.
 export enum QuestionType {
   MULTIPLE_CHOICE = 'Trắc nghiệm nhiều lựa chọn',
@@ -84,10 +85,14 @@ export interface GeneratedMatrixResponse {
     topics: GeneratedTopicConfig[];
 }
 
+export interface TocItem {
+    id: string;
+    chapter: string;
+    lessonName: string;
+}
+
 export interface GenerationOptions {
-    startPage?: number;
-    endPage?: number;
-    scopeHint?: string;
+    selectedTopics?: TocItem[];
 }
 
 export class RateLimitError extends Error {

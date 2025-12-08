@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { Topic, QuestionType, CognitiveLevel, Question, GeneratedMatrixResponse, GeneratedTopicConfig, TopicConfig, RateLimitError, questionKeys, SpecTopic, ObjectiveSpec, ApiKeyRequiredError, ExamConfig, InitialAnalysisResult } from '../types';
+import { Topic, QuestionType, CognitiveLevel, Question, GeneratedMatrixResponse, GeneratedTopicConfig, TopicConfig, RateLimitError, questionKeys, SpecTopic, ObjectiveSpec, ApiKeyRequiredError, ExamConfig, InitialAnalysisResult, TocItem } from '../types';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -93,6 +94,56 @@ export async function withRetry<T>(
     throw new ApiKeyRequiredError(`Tất cả ${keysToTry.length} Khóa API đã cung cấp đều không hợp lệ hoặc đã hết hạn ngạch. Vui lòng thêm một khóa API mới đang hoạt động.`);
 }
 
+/**
+ * Robust JSON parser that attempts to recover data from truncated or slightly malformed JSON responses.
+ */
+function safeParseQuestionsJson(jsonText: string): any[] {
+    let cleanText = jsonText.trim();
+    
+    // 1. Try standard parse first
+    try {
+        return JSON.parse(cleanText);
+    } catch (e) {
+        // Proceed to recovery
+    }
+
+    // 2. Strip potential markdown code blocks (```json ... ```)
+    cleanText = cleanText.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+
+    try {
+        return JSON.parse(cleanText);
+    } catch (e) {
+        // Proceed to truncation recovery
+    }
+
+    // 3. Handle truncation - Try to find the last valid array closure
+    if (cleanText.startsWith('[')) {
+        // Find the last closing brace '}' which signifies end of an object
+        let endIndex = cleanText.lastIndexOf('}');
+        
+        // Attempt to backtrack and find a valid array end
+        let attempts = 0;
+        // Search backwards up to 20 objects deep to find a valid JSON structure
+        while (endIndex > 0 && attempts < 50) {
+            const attemptStr = cleanText.substring(0, endIndex + 1) + ']';
+            try {
+                const parsed = JSON.parse(attemptStr);
+                if (Array.isArray(parsed)) {
+                    console.warn(`Recovered ${parsed.length} questions from truncated JSON.`);
+                    return parsed;
+                }
+            } catch (e) {
+                // Invalid JSON, likely cut in middle of object or structure invalid
+            }
+            // Move back to previous '}'
+            endIndex = cleanText.lastIndexOf('}', endIndex - 1);
+            attempts++;
+        }
+    }
+
+    throw new Error("Không thể phân tích dữ liệu JSON (dữ liệu có thể bị cắt cụt hoặc không hợp lệ).");
+}
+
 const analysisResponseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -106,6 +157,18 @@ const analysisResponseSchema = {
         departmentName: { type: Type.STRING, description: "The name of the department or team. E.g., 'TRƯỜNG THPT SỐ 3 BẢO THẮNG'" }
     },
     required: ['subjects', 'examTitle', 'schoolName', 'departmentName']
+};
+
+const tocResponseSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            chapter: { type: Type.STRING, description: "The chapter name or main section title (e.g., 'Chương 1: Chất và sự biến đổi'). If not applicable, use a general label." },
+            lessonName: { type: Type.STRING, description: "The specific lesson title or topic name (e.g., 'Bài 1: Nguyên tử')." }
+        },
+        required: ['chapter', 'lessonName']
+    }
 };
 
 const questionSchema = {
@@ -231,13 +294,70 @@ export const analyzeDocumentCover = async (
     throw new Error("Cấu trúc phản hồi từ AI không hợp lệ khi phân tích bìa.");
 };
 
+export const extractTableOfContents = async (
+    keysToTry: string[],
+    onKeyRotated: (newKey: string) => void,
+    images: string[]
+): Promise<TocItem[]> => {
+    // Send all images to AI to find the structure
+    // Optimization: Depending on document size, we might only need the first 10 pages, 
+    // but the user might upload a spec document where the "list of lessons" is deep inside.
+    // For now, we use all images as gemini-2.5-flash handles large context well.
+    const imageParts = images.map(imgBase64 => ({
+        inlineData: {
+            mimeType: 'image/jpeg',
+            data: imgBase64,
+        },
+    }));
+
+    const prompt = `
+        Analyze the provided document images. Your goal is to extract the **Table of Contents** or the **List of Lessons/Topics** that can be used to generate an exam.
+        
+        Look for sections labeled "Mục lục", "Nội dung", "Chương trình", or simply scan the document structure to identify:
+        1. **Chapters** (Chương/Chủ đề lớn)
+        2. **Lessons** (Bài học/Chuyên đề nhỏ/Đơn vị kiến thức) contained within those chapters.
+
+        Return a JSON array where each item represents a Lesson/Topic and its corresponding Chapter.
+        Structure: [{ "chapter": "Name of Chapter", "lessonName": "Name of Lesson" }, ...]
+
+        - If the document is a specification ("Bản đặc tả"), extract the rows from the specification matrix.
+        - If the document is a textbook or review material, extract the lessons.
+        - Ensure "chapter" and "lessonName" are in Vietnamese (unless the subject is English).
+        - If a lesson does not belong to a clear chapter, use a generic chapter name like "Nội dung chung" or "Chuyên đề".
+    `;
+
+    const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
+        return ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ text: prompt }, ...imageParts] },
+            config: {
+                systemInstruction: 'You are an expert AI assistant. Extract the Table of Contents or List of Lessons from the document into a structured JSON array.',
+                responseMimeType: 'application/json',
+                responseSchema: tocResponseSchema
+            }
+        });
+    }, "Trích xuất Mục lục");
+
+    const jsonText = response.text.trim();
+    const parsed = JSON.parse(jsonText);
+
+    if (Array.isArray(parsed)) {
+        return parsed.map((item: any) => ({
+            id: crypto.randomUUID(),
+            chapter: item.chapter || "Chương không xác định",
+            lessonName: item.lessonName || "Bài không xác định"
+        }));
+    }
+    throw new Error("Cấu trúc mục lục trả về từ AI không hợp lệ.");
+};
+
 
 export const generateMatrixFromImages = async (
     keysToTry: string[],
     onKeyRotated: (newKey: string) => void,
     images: string[],
     config: ExamConfig,
-    scopeHint?: string
+    selectedTopics?: TocItem[]
 ): Promise<GeneratedMatrixResponse> => {
     const imageParts = images.map(imgBase64 => ({
         inlineData: {
@@ -246,9 +366,22 @@ export const generateMatrixFromImages = async (
         },
     }));
 
-    const scopeInstruction = scopeHint
-        ? `The user has provided a strict focus for this analysis. You MUST EXCLUSIVELY analyze content related to: "${scopeHint}". Any chapters, lessons, or topics present in the images that do NOT fall under this scope must be completely IGNORED. Your entire output must be confined to this scope. This is the most critical instruction.`
-        : 'You are to analyze all content present in the provided document images.';
+    let scopeInstruction = '';
+    
+    if (selectedTopics && selectedTopics.length > 0) {
+        const topicsList = selectedTopics.map(t => `- Chapter: "${t.chapter}", Lesson: "${t.lessonName}"`).join('\n');
+        scopeInstruction = `
+            **CRITICAL SCOPE INSTRUCTION**:
+            The user has explicitly selected the following topics for the exam. You MUST ONLY generate the matrix for these specific topics. IGNORE any other content in the document.
+            
+            SELECTED TOPICS LIST:
+            ${topicsList}
+
+            For each selected topic above, you must create a corresponding entry in the output matrix. Do not skip any selected topic.
+        `;
+    } else {
+        scopeInstruction = 'You are to analyze all content present in the provided document images.';
+    }
 
     const multiSubjectInstruction = config.isMultiSubject && config.subjectAllocations
         ? `This is a multi-subject exam. You must distribute the questions and points according to the following allocation: ${config.subjectAllocations.map(s => `${s.subjectName}: ${s.percentage}%`).join(', ')}. When you identify a topic, you MUST assign it to the correct subject in the 'subject' field.`
@@ -273,7 +406,6 @@ export const generateMatrixFromImages = async (
     const prompt = `
         You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation. Your task is to analyze the provided document images and create a detailed exam matrix.
 
-        **PRIMARY INSTRUCTION: SCOPE OF ANALYSIS**
         ${scopeInstruction}
         
         **HIGH-LEVEL EXAM CONFIGURATION:**
@@ -292,22 +424,21 @@ export const generateMatrixFromImages = async (
         **REQUIRED TASKS & CRITICAL CONSTRAINTS:**
         1.  Base your analysis SOLELY on the content visible in the images and within the defined scope. Do not use external knowledge.
         2.  Identify a suitable overall title for the exam.
-        3.  Within the defined scope, identify the main chapters. For each chapter, extract the titles of ALL individual lessons or large sections within it. Each of these lesson/section titles will become a "Nội dung/đơn vị kiến thức".
-        4.  CRITICAL RULE: You MUST identify and list EVERY single lesson found within the document for the relevant chapters (respecting the scope). Do not skip or combine lessons. The names for chapters and lesson titles MUST be extracted as verbatim as possible from the document.
-        5.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
-        6.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
-        7.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
-        8.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
-        9.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
-        10. The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
-        11. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
-        12. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
-        13. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
+        3.  Generate the matrix topics based strictly on the 'SELECTED TOPICS LIST' provided above.
+        4.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
+        5.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
+        6.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
+        7.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
+        8.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
+        9.  The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
+        10. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
+        11. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
+        12. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
     `;
     
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
         return ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-flash',
             contents: { parts: [{ text: prompt }, ...imageParts] },
             config: {
                 systemInstruction: systemInstruction,
@@ -368,7 +499,7 @@ export const generateSpecification = async (
 
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
         return ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
                 systemInstruction: systemInstruction,
@@ -467,7 +598,7 @@ const generateQuestionsForObjective = async (
         2. **True/False (Trắc nghiệm Đúng/Sai):**
            - The 'text' field must be the main context/stem (e.g., a statement, a math problem, or a data set) belonging to the lesson "${topicName}".
            - The 'options' array MUST contain EXACTLY 4 distinct sub-statements (a, b, c, d) related to that context.
-           - The 'answer' field MUST specify the Truth value for EACH option in a readable string format like: "a) Đúng, b) Sai, c) Đúng, d) Sai".
+           - The 'answer' field MUST specify the Truth value for EACH option in a readable string format like: "a) Đ, b) S, c) Đ, d) S".
            - **CRITICAL RANDOMIZATION RULE:** You MUST randomly configure the 4 options so that the number of "True" statements is randomly chosen to be **1, 2, or 3**. Do NOT always make it 1 True/3 False. Do NOT always make it 2 True/2 False. Vary it.
            - All 4 statements must strictly relate to the provided context and lesson content.
 
@@ -505,7 +636,7 @@ const generateQuestionsForObjective = async (
 
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
         return ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
                 systemInstruction: systemInstruction,
@@ -519,7 +650,14 @@ const generateQuestionsForObjective = async (
     }, `Tạo ${totalQuestionsToGenerate} câu hỏi cho mục tiêu "${objective.learningObjective}"`);
 
     const jsonText = response.text.trim();
-    const parsedQuestions = JSON.parse(jsonText);
+    
+    let parsedQuestions: any[];
+    try {
+        parsedQuestions = safeParseQuestionsJson(jsonText);
+    } catch (e) {
+        console.error("JSON Parse Error:", e);
+        throw new Error(`Lỗi định dạng dữ liệu từ AI: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     if (Array.isArray(parsedQuestions)) {
         if (parsedQuestions.length !== totalQuestionsToGenerate) {
