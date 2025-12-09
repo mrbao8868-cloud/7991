@@ -190,6 +190,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         setIsGeneratingMatrix(true);
         setMatrixError(null);
         try {
+            // Prepare keys list: Active key first, then others
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
             const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, documentImages, examConfig, generationOptions?.selectedTopics);
             
