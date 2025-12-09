@@ -24,14 +24,14 @@ const ApiKeyPromptScreen: React.FC<ApiKeyPromptScreenProps> = ({ onOpenModal }) 
                                 Yêu cầu bắt buộc
                             </p>
                             <p className="text-sm text-amber-700 mt-1">
-                                Để ứng dụng hoạt động ổn định và tránh lỗi giới hạn tốc độ (Rate Limit) từ Google, bạn <b>bắt buộc phải nhập ít nhất 4 API Key</b>.
+                                Để ứng dụng hoạt động ổn định và tránh lỗi giới hạn tốc độ (Rate Limit) từ Google, bạn <b>bắt buộc phải nhập ít nhất 2 API Key</b>.
                             </p>
                         </div>
                     </div>
                 </div>
 
                 <p className="mt-4 text-sm text-slate-600">
-                    Vui lòng thêm đủ 4 API Key của Google Gemini để bắt đầu sử dụng ứng dụng.
+                    Vui lòng thêm đủ 2 API Key của Google Gemini để bắt đầu sử dụng ứng dụng.
                 </p>
                 <div className="mt-8">
                     <button

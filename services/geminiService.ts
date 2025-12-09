@@ -1,6 +1,7 @@
 
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { Topic, QuestionType, CognitiveLevel, Question, GeneratedMatrixResponse, GeneratedTopicConfig, TopicConfig, RateLimitError, questionKeys, SpecTopic, ObjectiveSpec, ApiKeyRequiredError, ExamConfig, InitialAnalysisResult, TocItem } from '../types';
+
+import { GoogleGenAI, Type, GenerateContentResponse, Chat } from "@google/genai";
+import { Topic, QuestionType, CognitiveLevel, Question, GeneratedMatrixResponse, GeneratedTopicConfig, TopicConfig, RateLimitError, questionKeys, SpecTopic, ObjectiveSpec, ApiKeyRequiredError, ExamConfig, InitialAnalysisResult, TocItem, GenerationMode } from '../types';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -152,7 +153,7 @@ const analysisResponseSchema = {
             items: { type: Type.STRING },
             description: "An array of subject names found on the cover page. E.g., ['Lịch sử', 'Địa lý']. If only one subject, return an array with one element."
         },
-        examTitle: { type: Type.STRING, description: "A suggested exam title based on the document's content. E.g., 'KIỂM TRA GIỮA HỌC KỲ I'" },
+        examTitle: { type: Type.STRING, description: "A suggested exam title based on the document's content. E.g., 'KIỂM TRA GIỮA HỌC KỲ I'. Crucially, you must IGNORE document-specific headers that are not exam titles, such as 'MỤC LỤC' (Table of Contents), 'ĐÁP ÁN' (Answer Key), 'BẢN ĐẶC TẢ' (Specification), or 'CHUYÊN ĐỀ' (Thematic Unit). The title should describe the type of assessment. " },
         schoolName: { type: Type.STRING, description: "The name of the school found on the page. E.g., 'SỞ GD&ĐT LÀO CAI'" },
         departmentName: { type: Type.STRING, description: "The name of the department or team. E.g., 'TRƯỜNG THPT SỐ 3 BẢO THẮNG'" }
     },
@@ -357,7 +358,8 @@ export const generateMatrixFromImages = async (
     onKeyRotated: (newKey: string) => void,
     images: string[],
     config: ExamConfig,
-    selectedTopics?: TocItem[]
+    selectedTopics?: TocItem[],
+    mode: GenerationMode = 'generate'
 ): Promise<GeneratedMatrixResponse> => {
     const imageParts = images.map(imgBase64 => ({
         inlineData: {
@@ -403,38 +405,59 @@ export const generateMatrixFromImages = async (
     const systemInstruction = `You are an expert AI curriculum designer for education. Your primary function is to generate a valid and logical exam matrix based on source material and strict constraints. ${languageInstruction}`;
 
 
-    const prompt = `
-        You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation. Your task is to analyze the provided document images and create a detailed exam matrix.
+    let prompt = '';
 
-        ${scopeInstruction}
-        
-        **HIGH-LEVEL EXAM CONFIGURATION:**
-        - Exam Duration: ${config.duration}. This is a critical factor for you to consider when assessing the complexity and length of the topics.
-        - Exam Difficulty Guideline: ${config.difficulty}. Use this to inform your question distribution. For 'Dễ' (Easy), prioritize 'Biết' (Knowledge) questions. For 'Trung bình' (Medium), ensure a balanced distribution. For 'Trung bình khá' (Medium-Hard), increase the proportion of 'Vận dụng' (Application) questions. This is a general guideline to be used in conjunction with the percentages below.
-        - ${multiSubjectInstruction}
-        - Total points for Objective Questions (TNKQ: 'mc', 'tf', 'sa'): ${config.tnkqPoints}.
-        - Total points for Essay Questions ('essay'): ${config.essayPoints}.
-        - Total Score: ${config.tnkqPoints + config.essayPoints} points.
-        - Total number of Multiple Choice ('mc') questions: ${config.mcCount}.
-        - Total number of True/False ('tf') questions: ${config.tfCount}.
-        - Total number of Short Answer ('sa') questions: ${config.saCount}.
-        - Total number of Essay ('essay') questions: ${config.essayCount}.
-        - Cognitive Level Distribution: ${config.knowledgePct}% for Knowledge (Biết), ${config.comprehensionPct}% for Comprehension (Hiểu), ${config.applicationPct}% for Application (Vận dụng).
+    if (mode === 'extract') {
+        prompt = `
+            You are an expert AI assistant for Vietnamese educators. You are analyzing a "Review Outline" (Đề cương ôn tập) which contains a list of EXISTING questions.
 
-        **REQUIRED TASKS & CRITICAL CONSTRAINTS:**
-        1.  Base your analysis SOLELY on the content visible in the images and within the defined scope. Do not use external knowledge.
-        2.  Identify a suitable overall title for the exam.
-        3.  Generate the matrix topics based strictly on the 'SELECTED TOPICS LIST' provided above.
-        4.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
-        5.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
-        6.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
-        7.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
-        8.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
-        9.  The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
-        10. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
-        11. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
-        12. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
-    `;
+            **YOUR TASK (EXTRACTION MODE):**
+            1. Scan the entire document images provided.
+            2. Identify ALL questions present in the document.
+            3. Group these questions by their Topic/Chapter/Lesson.
+            4. For each topic, count EXACTLY how many questions exist in the document for each type (MC, TF, SA, Essay) and cognitive level (Knowledge, Comprehension, Application).
+            5. Create a matrix that reflects the EXACT structure of the uploaded outline.
+            
+            **CRITICAL:** 
+            - IGNORE the target question counts (mcCount, tfCount, etc.) provided in the configuration. Instead, report the ACTUAL counts found in the document.
+            - If a topic has 50 questions in the document, your matrix must show 50 questions for that topic.
+            - Assign topics to the correct subject in the 'subject' field.
+            - Return a single JSON object containing the exam title (based on the document header) and an array of topic objects with their actual question counts.
+        `;
+    } else {
+        prompt = `
+            You are an expert AI assistant for Vietnamese educators, specializing in curriculum design and exam matrix creation. Your task is to analyze the provided document images and create a detailed exam matrix.
+
+            ${scopeInstruction}
+            
+            **HIGH-LEVEL EXAM CONFIGURATION:**
+            - Exam Duration: ${config.duration}. This is a critical factor for you to consider when assessing the complexity and length of the topics.
+            - Exam Difficulty Guideline: ${config.difficulty}. Use this to inform your question distribution. For 'Dễ' (Easy), prioritize 'Biết' (Knowledge) questions. For 'Trung bình' (Medium), ensure a balanced distribution. For 'Trung bình khá' (Medium-Hard), increase the proportion of 'Vận dụng' (Application) questions. This is a general guideline to be used in conjunction with the percentages below.
+            - ${multiSubjectInstruction}
+            - Total points for Objective Questions (TNKQ: 'mc', 'tf', 'sa'): ${config.tnkqPoints}.
+            - Total points for Essay Questions ('essay'): ${config.essayPoints}.
+            - Total Score: ${config.tnkqPoints + config.essayPoints} points.
+            - Total number of Multiple Choice ('mc') questions: ${config.mcCount}.
+            - Total number of True/False ('tf') questions: ${config.tfCount}.
+            - Total number of Short Answer ('sa') questions: ${config.saCount}.
+            - Total number of Essay ('essay') questions: ${config.essayCount}.
+            - Cognitive Level Distribution: ${config.knowledgePct}% for Knowledge (Biết), ${config.comprehensionPct}% for Comprehension (Hiểu), ${config.applicationPct}% for Application (Vận dụng).
+
+            **REQUIRED TASKS & CRITICAL CONSTRAINTS:**
+            1.  Base your analysis SOLELY on the content visible in the images and within the defined scope. Do not use external knowledge.
+            2.  Identify a suitable overall title for the exam.
+            3.  Generate the matrix topics based strictly on the 'SELECTED TOPICS LIST' provided above.
+            4.  For each topic, assign it to the correct subject in the 'subject' field (e.g., "Lịch sử", "Địa lí").
+            5.  Distribute the EXACT specified number of questions for each type across the extracted topics and cognitive levels ('knowledge', 'comprehension', 'application').
+            6.  The NUMBER of questions for every specific type and level (e.g., 'mc_knowledge') MUST be an INTEGER.
+            7.  The sum of all 'mc_knowledge', 'mc_comprehension', and 'mc_application' counts across all topics MUST equal EXACTLY ${config.mcCount}.
+            8.  The sum of all 'tf_knowledge', 'tf_comprehension', and 'tf_application' counts across all topics MUST equal EXACTLY ${config.tfCount}.
+            9.  The sum of all 'sa_knowledge', 'sa_comprehension', and 'sa_application' counts across all topics MUST equal EXACTLY ${config.saCount}.
+            10. The sum of all 'essay_knowledge', 'essay_comprehension', and 'essay_application' counts across all topics MUST equal EXACTLY ${config.essayCount}.
+            11. The distribution of points across the cognitive levels AND subjects should be as close as possible to the specified percentages. For calculation, assume each TNKQ question is worth ${tnkqPointPerQuestion.toFixed(3)} points and each Essay question is worth ${essayPointPerQuestion.toFixed(3)} points.
+            12. Return a single JSON object containing the exam title and an array of topic objects. Each topic object must contain the integer counts for all 12 question type/level combinations (e.g., 'mc_knowledge'). Ensure all 12 count fields and the 'subject' field are present for each topic.
+        `;
+    }
     
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
         return ai.models.generateContent({
@@ -528,7 +551,9 @@ const generateQuestionsForObjective = async (
     topicName: string,
     objective: ObjectiveSpec,
     subject: string | undefined,
-    onQuestionsGenerated: (questions: Question[]) => void
+    onQuestionsGenerated: (questions: Question[]) => void,
+    mode: GenerationMode,
+    images: string[] // We need images for extraction mode
 ): Promise<void> => {
     const isEnglishSubject = subject?.toLowerCase().includes('tiếng anh');
     const questionRequests: string[] = [];
@@ -579,53 +604,104 @@ const generateQuestionsForObjective = async (
         - IMPORTANT: Do NOT use LaTeX for simple numbers or plain text (e.g., "Câu 1", "3,0 điểm"). Only use it for formulas, equations, and mathematical notations.
     `;
     
-    const basePrompt = `
-        Learning Objective: "${objective.learningObjective}"
+    // Prepare image parts for extraction
+    const imageParts = images.map(imgBase64 => ({
+        inlineData: {
+            mimeType: 'image/jpeg',
+            data: imgBase64,
+        },
+    }));
 
-        Based on the provided context, generate a single JSON array containing a total of ${totalQuestionsToGenerate} questions that SPECIFICALLY assess this learning objective. The required questions are:
-        - ${questionRequests.join('\n- ')}
+    let basePrompt = '';
 
-        CRITICAL GUIDELINES FOR EACH QUESTION:
-        - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
-        - IMPORTANT: For multiple-choice and true/false options, provide ONLY the text of the option. DO NOT include the option letter (e.g., "A.", "B.", "C.") in the option string itself. The application will add these letters automatically.
-        ${isEnglishSubject ? '' : latexInstruction}
-        
-        **FORMAT GUIDELINES BY QUESTION TYPE:**
-        1. **Multiple Choice (Trắc nghiệm nhiều lựa chọn):**
-           - 'options': EXACTLY 4 distinct strings.
-           - 'answer': The letter of the correct option (e.g., "A").
+    if (mode === 'extract') {
+         basePrompt = `
+            Learning Objective: "${objective.learningObjective}"
+            Topic: "${topicName}"
 
-        2. **True/False (Trắc nghiệm Đúng/Sai):**
-           - The 'text' field must be the main context/stem (e.g., a statement, a math problem, or a data set) belonging to the lesson "${topicName}".
-           - The 'options' array MUST contain EXACTLY 4 distinct sub-statements (a, b, c, d) related to that context.
-           - The 'answer' field MUST specify the Truth value for EACH option in a readable string format like: "a) Đ, b) S, c) Đ, d) S".
-           - **CRITICAL RANDOMIZATION RULE:** You MUST randomly configure the 4 options so that the number of "True" statements is randomly chosen to be **1, 2, or 3**. Do NOT always make it 1 True/3 False. Do NOT always make it 2 True/2 False. Vary it.
-           - All 4 statements must strictly relate to the provided context and lesson content.
+            **TASK: EXTRACT QUESTIONS VERBATIM**
+            Based on the provided document images, find and transcribe exactly ${totalQuestionsToGenerate} questions that match the topic "${topicName}".
+            
+            The required composition is:
+            - ${questionRequests.join('\n- ')}
+            
+            **RULES FOR EXTRACTION:**
+            1. **DO NOT GENERATE NEW QUESTIONS.** You must find existing questions in the document images that fit this topic.
+            2. Transcribe the text, options, and answers EXACTLY as they appear in the image.
+            3. If the document does not provide an answer key, you must solve the question and provide the correct answer yourself.
+            4. If there are not enough questions in the document to match the exact count requested, please transcribe as many as you can find for this topic.
+            5. Follow the JSON format strictly.
+            
+            ${isEnglishSubject ? '' : latexInstruction}
+            
+            **FORMAT GUIDELINES BY QUESTION TYPE:**
+             1. **Multiple Choice (Trắc nghiệm nhiều lựa chọn):**
+               - 'options': EXACTLY 4 distinct strings.
+               - 'answer': The letter of the correct option (e.g., "A").
 
-        3. **Short Answer (Trả lời ngắn):**
-           - 'options': Empty array.
-           - 'answer': A concise model answer.
+            2. **True/False (Trắc nghiệm Đúng/Sai):**
+               - The 'text' field must be the main context/stem.
+               - The 'options' array MUST contain EXACTLY 4 distinct sub-statements (a, b, c, d).
+               - The 'answer' field MUST specify the Truth value for EACH option (e.g., "a) Đ, b) S, c) Đ, d) S").
 
-        4. **Essay (Tự luận):**
-           - ${essayAnswerInstruction}
+            3. **Short Answer (Trả lời ngắn):**
+               - 'options': Empty array.
+               - 'answer': A concise model answer.
 
-        The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
-        Return a single JSON array containing all the generated question objects.
-    `;
+            4. **Essay (Tự luận):**
+               - ${essayAnswerInstruction}
+
+            The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
+        `;
+    } else {
+         basePrompt = `
+            Learning Objective: "${objective.learningObjective}"
+
+            Based on the provided context, generate a single JSON array containing a total of ${totalQuestionsToGenerate} questions that SPECIFICALLY assess this learning objective. The required questions are:
+            - ${questionRequests.join('\n- ')}
+
+            CRITICAL GUIDELINES FOR EACH QUESTION:
+            - The 'learningObjective' field in the JSON response for each question MUST EXACTLY match "${objective.learningObjective}".
+            - IMPORTANT: For multiple-choice and true/false options, provide ONLY the text of the option. DO NOT include the option letter (e.g., "A.", "B.", "C.") in the option string itself. The application will add these letters automatically.
+            ${isEnglishSubject ? '' : latexInstruction}
+            
+            **FORMAT GUIDELINES BY QUESTION TYPE:**
+            1. **Multiple Choice (Trắc nghiệm nhiều lựa chọn):**
+               - 'options': EXACTLY 4 distinct strings.
+               - 'answer': The letter of the correct option (e.g., "A").
+
+            2. **True/False (Trắc nghiệm Đúng/Sai):**
+               - The 'text' field must be the main context/stem (e.g., a statement, a math problem, or a data set) belonging to the lesson "${topicName}".
+               - The 'options' array MUST contain EXACTLY 4 distinct sub-statements (a, b, c, d) related to that context.
+               - The 'answer' field MUST specify the Truth value for EACH option in a readable string format like: "a) Đ, b) S, c) Đ, d) S".
+               - **CRITICAL RANDOMIZATION RULE:** You MUST randomly configure the 4 options so that the number of "True" statements is randomly chosen to be **1, 2, or 3**. Do NOT always make it 1 True/3 False. Do NOT always make it 2 True/2 False. Vary it.
+               - All 4 statements must strictly relate to the provided context and lesson content.
+
+            3. **Short Answer (Trả lời ngắn):**
+               - 'options': Empty array.
+               - 'answer': A concise model answer.
+
+            4. **Essay (Tự luận):**
+               - ${essayAnswerInstruction}
+
+            The final JSON array should contain exactly ${totalQuestionsToGenerate} question objects.
+            Return a single JSON array containing all the generated question objects.
+        `;
+    }
     
     const prompt = isEnglishSubject ? `
         Subject: English
         Chapter: "${chapter}"
         Topic: "${topicName}"
         
-        Generate questions in ENGLISH.
+        Generate/Extract questions in ENGLISH.
 
         ${basePrompt}
     ` : `
         Chương: "${chapter}"
         Chủ đề: "${topicName}"
         
-        Tạo câu hỏi bằng TIẾNG VIỆT.
+        ${mode === 'extract' ? 'Trích xuất' : 'Tạo'} câu hỏi bằng TIẾNG VIỆT.
 
         ${basePrompt}
     `;
@@ -634,10 +710,15 @@ const generateQuestionsForObjective = async (
     "You are an expert in creating educational materials for English language learners. You will generate a batch of questions in English based on a specific learning objective. You must strictly adhere to the requested JSON schema and question counts." :
     "You are an expert in creating educational materials for Vietnamese schools. You will generate a batch of questions based on a specific learning objective. All content must be in Vietnamese and strictly adhere to the requested JSON schema and question counts.";
 
+    // If Extract mode, we must pass the images. If Generate mode, we rely on internal knowledge (or context if passed, but usually standard gen doesn't need images at this granular level unless we pass specific pages. For now, we will pass images if in extract mode).
+    const contentPayload = mode === 'extract' 
+        ? { parts: [{ text: prompt }, ...imageParts] }
+        : prompt;
+
     const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
         return ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: prompt,
+            contents: contentPayload,
             config: {
                 systemInstruction: systemInstruction,
                 responseMimeType: 'application/json',
@@ -647,7 +728,7 @@ const generateQuestionsForObjective = async (
                 }
             }
         });
-    }, `Tạo ${totalQuestionsToGenerate} câu hỏi cho mục tiêu "${objective.learningObjective}"`);
+    }, `Tạo/Trích xuất ${totalQuestionsToGenerate} câu hỏi cho mục tiêu "${objective.learningObjective}"`);
 
     const jsonText = response.text.trim();
     
@@ -676,7 +757,9 @@ export const generateAllQuestionsForTopics = async (
     onKeyRotated: (newKey: string) => void,
     topics: Topic[],
     specification: SpecTopic[],
-    onTopicUpdate: (updatedTopic: Topic) => void
+    onTopicUpdate: (updatedTopic: Topic) => void,
+    mode: GenerationMode,
+    images: string[]
 ): Promise<void> => {
     const topicMap = new Map(topics.map(t => [t.id, t]));
     let masterError: Error | null = null;
@@ -704,7 +787,19 @@ export const generateAllQuestionsForTopics = async (
                     });
                 };
                 
-                await generateQuestionsForObjective(keysToTry, onKeyRotated, spec.chapter, spec.name, obj, originalTopic.subject, onQuestionsGenerated);
+                // If extract mode, we pass all images. This might be heavy, but necessary to find the question in the document.
+                // Optimization: In a real app, we would map topics to specific pages.
+                await generateQuestionsForObjective(
+                    keysToTry, 
+                    onKeyRotated, 
+                    spec.chapter, 
+                    spec.name, 
+                    obj, 
+                    originalTopic.subject, 
+                    onQuestionsGenerated,
+                    mode,
+                    images
+                );
             }
             
             if (masterError) continue;
@@ -735,3 +830,34 @@ export const generateAllQuestionsForTopics = async (
         throw masterError;
     }
 };
+
+export const sendChatMessage = async (
+    apiKey: string,
+    history: {role: string, parts: {text: string}[]}[],
+    message: string
+): Promise<string> => {
+    if (!apiKey) {
+        throw new Error("Vui lòng nhập API Key để sử dụng Chatbot.");
+    }
+
+    const ai = new GoogleGenAI({ apiKey: apiKey });
+    
+    // Convert generic history format to Gemini Chat history format
+    // Note: Gemini SDK Chat expects 'user' and 'model' roles.
+    
+    const chat: Chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        history: history,
+        config: {
+            systemInstruction: "Bạn là trợ lý ảo chuyên biệt cho ứng dụng 'Tạo đề thi theo công văn 7991'. NHIỆM VỤ DUY NHẤT của bạn là hướng dẫn người dùng cách sử dụng các chức năng của phần mềm (Tải file PDF, Cấu hình ma trận, Chỉnh sửa đặc tả, Xuất file). TUYỆT ĐỐI KHÔNG trả lời các câu hỏi kiến thức chung, không làm bài tập hộ, và không tự tạo đề thi trong cửa sổ chat này. Nếu người dùng hỏi ngoài phạm vi hướng dẫn sử dụng, hãy từ chối lịch sự.",
+        }
+    });
+
+    try {
+        const result: GenerateContentResponse = await chat.sendMessage({ message: message });
+        return result.text || "Xin lỗi, tôi không thể trả lời câu hỏi này.";
+    } catch (error: any) {
+        console.error("Chat error:", error);
+        throw new Error("Đã xảy ra lỗi khi kết nối với AI.");
+    }
+}

@@ -47,7 +47,7 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
         return `${key.substring(0, 8)}...${key.substring(key.length - 4)}`;
     };
 
-    const remainingKeys = Math.max(0, 4 - keys.length);
+    const remainingKeys = Math.max(0, 2 - keys.length);
 
     return (
         <div 
@@ -74,7 +74,7 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                                 <p>Thêm và chọn Khóa API của Google AI Studio.</p>
                                 <p className="text-red-600 font-bold mt-1">
                                     {remainingKeys > 0 
-                                        ? `Bắt buộc thêm ${remainingKeys} khóa nữa để bắt đầu (Tối thiểu 4).`
+                                        ? `Bắt buộc thêm ${remainingKeys} khóa nữa để bắt đầu (Tối thiểu 2).`
                                         : 'Đã đủ số lượng khóa yêu cầu.'}
                                 </p>
                             </div>
@@ -119,8 +119,8 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                     <div className="mt-6">
                         <div className="flex justify-between items-end mb-2">
                             <h4 className="font-semibold text-slate-700">Các khóa đã lưu</h4>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${keys.length >= 4 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                {keys.length}/4 Khóa ({remainingKeys > 0 ? `Thiếu ${remainingKeys}` : 'Đủ'})
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${keys.length >= 2 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                {keys.length}/2 Khóa ({remainingKeys > 0 ? `Thiếu ${remainingKeys}` : 'Đủ'})
                             </span>
                         </div>
                         <div className="space-y-2 max-h-60 overflow-y-auto pr-2">

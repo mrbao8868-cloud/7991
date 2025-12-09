@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec, GenerationOptions } from '../types';
 import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, SparkleIcon, KeyIcon, ChevronDownIcon } from './icons';
@@ -192,7 +193,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         try {
             // Prepare keys list: Active key first, then others
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, documentImages, examConfig, generationOptions?.selectedTopics);
+            
+            const mode = generationOptions?.mode || 'generate';
+            const extractedData = await generateMatrixFromImages(keysToTry, onSetActiveKey, documentImages, examConfig, generationOptions?.selectedTopics, mode);
             
             if (!examConfig) return;
             setExamTitle(extractedData.examTitle);
@@ -262,7 +265,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         setTopics(prev => prev.map(t => ({ ...t, generationStatus: 'pending', generationError: undefined })));
         try {
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            await generateAllQuestionsForTopics(keysToTry, onSetActiveKey, topics, specification, onTopicUpdate);
+            const mode = generationOptions?.mode || 'generate';
+            // If extracting, we pass the images so the service can read them.
+            const imagesToPass = mode === 'extract' ? documentImages : [];
+            await generateAllQuestionsForTopics(keysToTry, onSetActiveKey, topics, specification, onTopicUpdate, mode, imagesToPass);
         } catch (error: unknown) {
             handleGenerationError(error, setQuestionsError);
         } finally {
@@ -281,7 +287,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         setIsGeneratingQuestions(true); // Show a general loading state
         try {
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            await generateAllQuestionsForTopics(keysToTry, onSetActiveKey, [topicToRetry], [specForTopic], onTopicUpdate);
+            const mode = generationOptions?.mode || 'generate';
+             const imagesToPass = mode === 'extract' ? documentImages : [];
+            await generateAllQuestionsForTopics(keysToTry, onSetActiveKey, [topicToRetry], [specForTopic], onTopicUpdate, mode, imagesToPass);
         } catch (error: unknown) {
             handleGenerationError(error, (msg) => {
                 const failedTopic = topics.find(t => t.id === topicId);
@@ -429,7 +437,12 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     };
 
     const renderMatrix = () => {
-        const tnkqPointsFromConfig = examConfig.tnkqPoints;
+        // Business Rules:
+        const SCORE_MC = 0.25;
+        const SCORE_SA = 0.25;
+        // SCORE_TF is calculated dynamically below based on the configured Total TNKQ points
+        // minus the points allocated to MC and SA.
+
         const essayPointsFromConfig = examConfig.essayPoints;
 
         const groupedTopics = topics.reduce((acc, topic) => {
@@ -440,32 +453,42 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         const totals = questionKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {} as TopicConfig);
         topics.forEach(t => questionKeys.forEach(k => { totals[k] += t[k]; }));
 
-        const totalTnkqCountInMatrix = (totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) + 
-                                     (totals.tf_knowledge + totals.tf_comprehension + totals.tf_application) +
-                                     (totals.sa_knowledge + totals.sa_comprehension + totals.sa_application);
-
         const totalEssayCountInMatrix = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
 
-        const tnkqScorePerItem = totalTnkqCountInMatrix > 0 ? tnkqPointsFromConfig / totalTnkqCountInMatrix : 0;
+        // Essay score is dynamic (remaining points / total essay questions)
         const essayScorePerItem = totalEssayCountInMatrix > 0 ? essayPointsFromConfig / totalEssayCountInMatrix : 0;
             
         const totalMcQuestions = totals.mc_knowledge + totals.mc_comprehension + totals.mc_application;
         const totalTfQuestions = totals.tf_knowledge + totals.tf_comprehension + totals.tf_application;
         const totalSaQuestions = totals.sa_knowledge + totals.sa_comprehension + totals.sa_application;
     
-        const totalMcPoints = totalMcQuestions * tnkqScorePerItem;
-        const totalTfPoints = totalTfQuestions * tnkqScorePerItem;
-        const totalSaPoints = totalSaQuestions * tnkqScorePerItem;
+        // Calculate points based on counts and fixed scores for MC/SA
+        const pointsForMc = totalMcQuestions * SCORE_MC;
+        const pointsForSa = totalSaQuestions * SCORE_SA;
+        
+        // The remaining points in TNKQ are assigned to TF questions
+        const currentTnkqPoints = examConfig.tnkqPoints;
+        const remainingForTf = Math.max(0, currentTnkqPoints - (pointsForMc + pointsForSa));
+        
+        // Dynamic score per TF question
+        const SCORE_TF = totalTfQuestions > 0 ? remainingForTf / totalTfQuestions : 0;
+
+        const totalMcPoints = pointsForMc;
+        const totalTfPoints = totalTfQuestions * SCORE_TF;
+        const totalSaPoints = pointsForSa;
 
         const totalTnkqPoints = totalMcPoints + totalTfPoints + totalSaPoints;
         const totalEssayPoints = totalEssayCountInMatrix * essayScorePerItem;
         const actualTotalExamScore = totalTnkqPoints + totalEssayPoints;
     
-        const totalKnowPoints = (totals.mc_knowledge + totals.tf_knowledge + totals.sa_knowledge) * tnkqScorePerItem + (totals.essay_knowledge * essayScorePerItem);
-        const totalCompPoints = (totals.mc_comprehension + totals.tf_comprehension + totals.sa_comprehension) * tnkqScorePerItem + (totals.essay_comprehension * essayScorePerItem);
-        const totalAppPoints = (totals.mc_application + totals.tf_application + totals.sa_application) * tnkqScorePerItem + (totals.essay_application * essayScorePerItem);
+        const totalKnowPoints = (totals.mc_knowledge * SCORE_MC) + (totals.tf_knowledge * SCORE_TF) + (totals.sa_knowledge * SCORE_SA) + (totals.essay_knowledge * essayScorePerItem);
+        const totalCompPoints = (totals.mc_comprehension * SCORE_MC) + (totals.tf_comprehension * SCORE_TF) + (totals.sa_comprehension * SCORE_SA) + (totals.essay_comprehension * essayScorePerItem);
+        const totalAppPoints = (totals.mc_application * SCORE_MC) + (totals.tf_application * SCORE_TF) + (totals.sa_application * SCORE_SA) + (totals.essay_application * essayScorePerItem);
     
-        const formatPoints = (points: number) => points.toFixed(2).replace('.', ',');
+        const formatPoints = (points: number) => {
+            if (Number.isInteger(points)) return points.toString();
+            return points.toFixed(2).replace('.', ',');
+        };
     
         const renderMatrixCell = (count: number, score: number) => {
             if (!count || count === 0) return <td className="border border-slate-300 p-2"></td>;
@@ -517,11 +540,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <React.Fragment key={chapter}>
                                     {chapterTopics.map((topic, topicIndex) => {
                                         const knowCount = topic.mc_knowledge + topic.tf_knowledge + topic.sa_knowledge + topic.essay_knowledge;
-                                        const knowScore = (topic.mc_knowledge + topic.tf_knowledge + topic.sa_knowledge) * tnkqScorePerItem + (topic.essay_knowledge * essayScorePerItem);
+                                        const knowScore = (topic.mc_knowledge * SCORE_MC) + (topic.tf_knowledge * SCORE_TF) + (topic.sa_knowledge * SCORE_SA) + (topic.essay_knowledge * essayScorePerItem);
                                         const compCount = topic.mc_comprehension + topic.tf_comprehension + topic.sa_comprehension + topic.essay_comprehension;
-                                        const compScore = (topic.mc_comprehension + topic.tf_comprehension + topic.sa_comprehension) * tnkqScorePerItem + (topic.essay_comprehension * essayScorePerItem);
+                                        const compScore = (topic.mc_comprehension * SCORE_MC) + (topic.tf_comprehension * SCORE_TF) + (topic.sa_comprehension * SCORE_SA) + (topic.essay_comprehension * essayScorePerItem);
                                         const appCount = topic.mc_application + topic.tf_application + topic.sa_application + topic.essay_application;
-                                        const appScore = (topic.mc_application + topic.tf_application + topic.sa_application) * tnkqScorePerItem + (topic.essay_application * essayScorePerItem);
+                                        const appScore = (topic.mc_application * SCORE_MC) + (topic.tf_application * SCORE_TF) + (topic.sa_application * SCORE_SA) + (topic.essay_application * essayScorePerItem);
     
                                         const rowTotalScore = knowScore + compScore + appScore;
                                         const rowPercentage = actualTotalExamScore > 0 ? `${Math.round((rowTotalScore / actualTotalExamScore) * 100)}` : '0';
@@ -531,15 +554,15 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                                 {topicIndex === 0 && <td rowSpan={chapterTopics.length} className="border border-slate-300 p-2 font-bold text-center align-middle">{++chapterIndex}</td>}
                                                 {topicIndex === 0 && <td rowSpan={chapterTopics.length} className="border border-slate-300 p-2 text-left font-semibold align-top">{chapter}</td>}
                                                 <td className="border border-slate-300 p-2 text-left align-middle">{topic.name}</td>
-                                                {renderMatrixCell(topic.mc_knowledge, topic.mc_knowledge * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.mc_comprehension, topic.mc_comprehension * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.mc_application, topic.mc_application * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.tf_knowledge, topic.tf_knowledge * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.tf_comprehension, topic.tf_comprehension * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.tf_application, topic.tf_application * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.sa_knowledge, topic.sa_knowledge * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.sa_comprehension, topic.sa_comprehension * tnkqScorePerItem)}
-                                                {renderMatrixCell(topic.sa_application, topic.sa_application * tnkqScorePerItem)}
+                                                {renderMatrixCell(topic.mc_knowledge, topic.mc_knowledge * SCORE_MC)}
+                                                {renderMatrixCell(topic.mc_comprehension, topic.mc_comprehension * SCORE_MC)}
+                                                {renderMatrixCell(topic.mc_application, topic.mc_application * SCORE_MC)}
+                                                {renderMatrixCell(topic.tf_knowledge, topic.tf_knowledge * SCORE_TF)}
+                                                {renderMatrixCell(topic.tf_comprehension, topic.tf_comprehension * SCORE_TF)}
+                                                {renderMatrixCell(topic.tf_application, topic.tf_application * SCORE_TF)}
+                                                {renderMatrixCell(topic.sa_knowledge, topic.sa_knowledge * SCORE_SA)}
+                                                {renderMatrixCell(topic.sa_comprehension, topic.sa_comprehension * SCORE_SA)}
+                                                {renderMatrixCell(topic.sa_application, topic.sa_application * SCORE_SA)}
                                                 {renderMatrixCell(topic.essay_knowledge, topic.essay_knowledge * essayScorePerItem)}
                                                 {renderMatrixCell(topic.essay_comprehension, topic.essay_comprehension * essayScorePerItem)}
                                                 {renderMatrixCell(topic.essay_application, topic.essay_application * essayScorePerItem)}
@@ -595,8 +618,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     const renderSpecification = () => { 
         if (!specification || !Array.isArray(specification)) return null;
         
-        const tnkqPointsFromConfig = examConfig.tnkqPoints;
+        // Re-calculate scores for specification based on same logic as matrix
+        const SCORE_MC = 0.25;
+        const SCORE_SA = 0.25;
         const essayPointsFromConfig = examConfig.essayPoints;
+        const currentTnkqPoints = examConfig.tnkqPoints;
 
         const specTotals = questionKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {} as TopicConfig);
         specification.forEach(specTopic => {
@@ -609,17 +635,22 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             }
         });
         
-        const totalTnkqCountFromSpec = (specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application) +
-                                   (specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application) +
-                                   (specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application);
+        const totalMcQuestions = specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application;
+        const totalTfQuestions = specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application;
+        const totalSaQuestions = specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application;
         
-        const tnkqScorePerItem = totalTnkqCountFromSpec > 0 ? tnkqPointsFromConfig / totalTnkqCountFromSpec : 0;
-
-        const mcScore = (specTotals.mc_knowledge + specTotals.mc_comprehension + specTotals.mc_application) * tnkqScorePerItem;
-        const tfScore = (specTotals.tf_knowledge + specTotals.tf_comprehension + specTotals.tf_application) * tnkqScorePerItem;
-        const saScore = (specTotals.sa_knowledge + specTotals.sa_comprehension + specTotals.sa_application) * tnkqScorePerItem;
+        const pointsForMc = totalMcQuestions * SCORE_MC;
+        const pointsForSa = totalSaQuestions * SCORE_SA;
+        const remainingForTf = Math.max(0, currentTnkqPoints - (pointsForMc + pointsForSa));
+        
+        const SCORE_TF = totalTfQuestions > 0 ? remainingForTf / totalTfQuestions : 0;
+        
+        const mcScore = pointsForMc;
+        const tfScore = totalTfQuestions * SCORE_TF;
+        const saScore = pointsForSa;
         const essayScore = essayPointsFromConfig;
         const totalScore = mcScore + tfScore + saScore + essayScore;
+
         const formatScore = (score: number) => {
             if (score === 0) return '';
             return Number.isInteger(score) ? String(score) : score.toFixed(2).replace('.', ',');
@@ -744,6 +775,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         const essayQuestions = allQuestions.filter(q => q.type === QuestionType.ESSAY);
         
         const tnkqQuestionCount = mcQuestions.length + tfQuestions.length + saQuestions.length;
+        // Approximate point for display in instructions
         const tnkqScorePerItem = tnkqQuestionCount > 0 ? tnkqPoints / tnkqQuestionCount : 0;
         
         let questionCounter = 0;
@@ -863,7 +895,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                 {(mcQuestions.length + tfQuestions.length + saQuestions.length) > 0 && (
                     <div className="mb-8 break-inside-avoid">
                         <p className="font-bold mb-2">A. PHẦN TRẮC NGHIỆM KHÁCH QUAN ({formatPoints(tnkqPoints)} điểm)</p>
-                        <p className="mb-4">Mỗi câu trả lời đúng được {tnkqScorePerItem.toFixed(2).replace('.',',')} điểm.</p>
                         
                         {mcQuestions.length > 0 && (
                             <div className="mb-6">

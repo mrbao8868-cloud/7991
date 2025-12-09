@@ -12,10 +12,10 @@ const defaultInitialConfig: Omit<ExamConfig, 'schoolName' | 'departmentName' | '
     schoolYear: `NĂM HỌC ${new Date().getFullYear()} - ${new Date().getFullYear() + 1}`,
     examCode: '301',
     duration: '45 phút',
-    tnkqPoints: 7,
-    essayPoints: 3,
-    mcCount: 20,
-    tfCount: 4,
+    tnkqPoints: 6, // Will be recalculated
+    essayPoints: 4, // Will be recalculated
+    mcCount: 12,
+    tfCount: 2,
     saCount: 4,
     essayCount: 1,
     knowledgePct: 40,
@@ -40,16 +40,19 @@ const InfoCard: React.FC<{ title: string; children: React.ReactNode }> = ({ titl
     </div>
 );
 
-const LabeledInput: React.FC<{ label: string; name: string; value: string; type?: string; onChange: (e: React.ChangeEvent<HTMLInputElement>) => void; }> = ({ label, name, value, type = 'text', onChange }) => (
+interface LabeledInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+    label: string;
+    name: string;
+}
+
+const LabeledInput: React.FC<LabeledInputProps> = ({ label, name, className, ...props }) => (
     <div>
         <label htmlFor={name} className="block text-sm font-medium text-slate-600">{label}</label>
         <input
             id={name}
             name={name}
-            type={type}
-            value={value}
-            onChange={onChange}
-            className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+            {...props}
+            className={`mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm ${props.readOnly ? 'bg-slate-100 text-slate-500' : 'bg-white'} ${className || ''}`}
         />
     </div>
 );
@@ -75,8 +78,43 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
       () => analysisResult.subjects.map(s => ({ subjectName: s, percentage: '' }))
     );
     const [allocationError, setAllocationError] = useState<string | null>(null);
+    const [pointError, setPointError] = useState<string | null>(null);
 
     const isMultiSubject = analysisResult.subjects.length > 1;
+
+    // Effect to auto-calculate points based on counts (Default logic)
+    // If the user manually changes points, this effect will only run again if they change the counts.
+    useEffect(() => {
+        const mc = parseFloat(formValues.mcCount) || 0;
+        const tf = parseFloat(formValues.tfCount) || 0;
+        const sa = parseFloat(formValues.saCount) || 0;
+
+        // Default Rule:
+        // MC: 0.25 points
+        // SA: 0.25 points
+        // TF: 1.0 points (Standard assumption, but user can override)
+        
+        let tnkqRaw = (mc * 0.25) + (tf * 1.0) + (sa * 0.25);
+        
+        // Fix floating point precision issues (e.g., 3.99999999)
+        const tnkq = Math.round(tnkqRaw * 1000) / 1000;
+        
+        let essayRaw = 10 - tnkq;
+        // Ensure essay isn't negative and round cleanly
+        const essay = Math.max(0, Math.round(essayRaw * 1000) / 1000);
+
+        if (essay <= 0 && tnkq > 10) {
+            setPointError(`Tổng điểm TNKQ (${tnkq}) vượt quá 10 điểm! Vui lòng giảm số lượng câu hỏi hoặc chỉnh sửa điểm thủ công.`);
+        } else {
+            setPointError(null);
+        }
+
+        setFormValues(prev => ({
+            ...prev,
+            tnkqPoints: tnkq.toString(),
+            essayPoints: essay.toString()
+        }));
+    }, [formValues.mcCount, formValues.tfCount, formValues.saCount]);
 
      useEffect(() => {
         if (!isMultiSubject) {
@@ -96,6 +134,41 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
         setFormValues(prev => ({ ...prev, [name]: value }));
     };
 
+    const handlePointChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        // Allow typing (string), parse for logic to update the pair
+        const val = parseFloat(value) || 0;
+        
+        if (name === 'tnkqPoints') {
+            const essay = Math.max(0, 10 - val);
+            // Round to 3 decimals to avoid floating point weirdness during edit
+            const essayRounded = Math.round(essay * 1000) / 1000;
+            setFormValues(prev => ({
+                ...prev,
+                tnkqPoints: value,
+                essayPoints: essayRounded.toString()
+            }));
+            if (val > 10) {
+                setPointError(`Tổng điểm TNKQ không được vượt quá 10.`);
+            } else {
+                setPointError(null);
+            }
+        } else if (name === 'essayPoints') {
+             const tnkq = Math.max(0, 10 - val);
+             const tnkqRounded = Math.round(tnkq * 1000) / 1000;
+             setFormValues(prev => ({
+                ...prev,
+                essayPoints: value,
+                tnkqPoints: tnkqRounded.toString()
+            }));
+             if (val > 10) {
+                setPointError(`Tổng điểm Tự luận không được vượt quá 10.`);
+            } else {
+                setPointError(null);
+            }
+        }
+    };
+
     const handleAllocationChange = (index: number, value: string) => {
         const newAllocations = [...allocations];
         newAllocations[index].percentage = value;
@@ -104,7 +177,7 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (allocationError) return;
+        if (allocationError || pointError) return;
 
         const finalConfig: ExamConfig = {
             schoolName: formValues.schoolName,
@@ -116,8 +189,9 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
             duration: formValues.duration,
             isMultiSubject: isMultiSubject,
             subjectAllocations: isMultiSubject ? allocations.map(a => ({...a, percentage: Number(a.percentage) || 0})) : undefined,
-            tnkqPoints: parseInt(formValues.tnkqPoints, 10) || 0,
-            essayPoints: parseInt(formValues.essayPoints, 10) || 0,
+            // Use parseFloat to preserve decimals
+            tnkqPoints: parseFloat(formValues.tnkqPoints) || 0,
+            essayPoints: parseFloat(formValues.essayPoints) || 0,
             mcCount: parseInt(formValues.mcCount, 10) || 0,
             tfCount: parseInt(formValues.tfCount, 10) || 0,
             saCount: parseInt(formValues.saCount, 10) || 0,
@@ -211,15 +285,21 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4">
-                                     <LabeledInput label="Điểm TNKQ" name="tnkqPoints" type="number" value={formValues.tnkqPoints} onChange={handleChange} />
-                                     <LabeledInput label="Điểm Tự luận" name="essayPoints" type="number" value={formValues.essayPoints} onChange={handleChange} />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4">
-                                    <LabeledInput label="Nhiều lựa chọn" name="mcCount" type="number" value={formValues.mcCount} onChange={handleChange} />
-                                    <LabeledInput label="Đúng/Sai" name="tfCount" type="number" value={formValues.tfCount} onChange={handleChange} />
-                                    <LabeledInput label="Trả lời ngắn" name="saCount" type="number" value={formValues.saCount} onChange={handleChange} />
+                                    <LabeledInput label="Nhiều lựa chọn (0.25đ)" name="mcCount" type="number" value={formValues.mcCount} onChange={handleChange} />
+                                    <LabeledInput label="Đúng/Sai (Mặc định 1.0đ)" name="tfCount" type="number" value={formValues.tfCount} onChange={handleChange} />
+                                    <LabeledInput label="Trả lời ngắn (0.25đ)" name="saCount" type="number" value={formValues.saCount} onChange={handleChange} />
                                     <LabeledInput label="Tự luận" name="essayCount" type="number" value={formValues.essayCount} onChange={handleChange} />
                                 </div>
+                                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4 bg-slate-100 p-3 rounded-md">
+                                     <LabeledInput label="Điểm TNKQ (Sửa được)" name="tnkqPoints" type="text" value={formValues.tnkqPoints} onChange={handlePointChange} />
+                                     <LabeledInput label="Điểm Tự luận (Sửa được)" name="essayPoints" type="text" value={formValues.essayPoints} onChange={handlePointChange} />
+                                </div>
+                                {pointError && (
+                                    <div className="flex items-start text-xs text-red-700 bg-red-50 p-2 rounded-md mt-2">
+                                            <ExclamationTriangleIcon className="h-4 w-4 mr-1.5 mt-0.5 flex-shrink-0" />
+                                            {pointError}
+                                    </div>
+                                )}
                                 <div className="grid grid-cols-3 gap-3 pt-4 border-t border-slate-200 mt-4">
                                     <LabeledInput label="Biết (%)" name="knowledgePct" type="number" value={formValues.knowledgePct} onChange={handleChange} />
                                     <LabeledInput label="Hiểu (%)" name="comprehensionPct" type="number" value={formValues.comprehensionPct} onChange={handleChange} />
@@ -232,7 +312,7 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
                             <button type="button" onClick={onBack} className="w-full sm:w-auto px-10 py-3 border border-slate-300 text-base font-medium rounded-full shadow-sm text-slate-700 bg-white hover:bg-slate-50">
                                 Quay lại
                             </button>
-                            <button type="submit" disabled={!!allocationError} className="w-full sm:w-auto inline-flex items-center justify-center px-10 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-slate-400 disabled:cursor-not-allowed">
+                            <button type="submit" disabled={!!allocationError || !!pointError} className="w-full sm:w-auto inline-flex items-center justify-center px-10 py-3 border border-transparent text-base font-medium rounded-full shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-slate-400 disabled:cursor-not-allowed">
                                 Tạo Ma trận chi tiết
                             </button>
                         </div>

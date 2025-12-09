@@ -91,8 +91,11 @@ export interface TocItem {
     lessonName: string;
 }
 
+export type GenerationMode = 'generate' | 'extract';
+
 export interface GenerationOptions {
     selectedTopics?: TocItem[];
+    mode: GenerationMode;
 }
 
 export class RateLimitError extends Error {

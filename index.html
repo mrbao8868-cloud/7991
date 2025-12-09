@@ -31,6 +31,22 @@
       body {
         font-family: 'Be Vietnam Pro', sans-serif;
       }
+      /* Marquee Animation */
+      .marquee-container {
+        overflow: hidden;
+        white-space: nowrap;
+        position: relative;
+      }
+      .animate-marquee {
+        display: inline-block;
+        padding-left: 100%; /* Start off-screen right */
+        animation: marquee 25s linear infinite;
+      }
+      @keyframes marquee {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(-100%); }
+      }
+      
       @media print {
         @page {
           size: A4 portrait;

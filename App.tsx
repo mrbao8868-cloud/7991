@@ -1,12 +1,14 @@
+
 import React, { useState, useEffect } from 'react';
 import { ExamConfig, InitialAnalysisResult, GenerationOptions } from './types';
-import { BalDigitechLogo, LockClosedIcon, SparkleIcon, ArrowTopRightOnSquareIcon } from './components/icons';
+import { BalDigitechLogo, LockClosedIcon, SparkleIcon, ArrowTopRightOnSquareIcon, MegaphoneIcon } from './components/icons';
 import ApiKeyManagerModal from './components/ApiKeyManagerModal';
 import ConfigurationScreen from './components/ConfigurationScreen';
 import ApiKeyPromptScreen from './components/ApiKeyPromptScreen';
 import ExamWorkspace from './components/ExamWorkspace';
 import UploadScreen from './components/UploadScreen';
 import LoginScreen from './components/LoginScreen';
+import Chatbot from './components/Chatbot';
 
 type AppStage = 'upload' | 'configure' | 'workspace';
 
@@ -32,6 +34,9 @@ function App() {
     // Centralized state for the status bar message
     const [statusMessage, setStatusMessage] = useState('');
 
+    // Announcement State
+    const [announcement, setAnnouncement] = useState<string | null>(null);
+
     // Load API keys and Auth status from localStorage on initial render
     useEffect(() => {
         try {
@@ -46,7 +51,7 @@ function App() {
             const keys = storedKeys ? JSON.parse(storedKeys) : [];
             setApiKeys(keys);
             
-            const hasEnoughKeys = keys.length >= 4;
+            const hasEnoughKeys = keys.length >= 2;
 
             if (storedActiveKey && keys.includes(storedActiveKey)) {
                 setActiveApiKey(storedActiveKey);
@@ -69,8 +74,8 @@ function App() {
     // Effect to manage the main status message based on app state
     useEffect(() => {
         if (!isAppReady) {
-            const remaining = Math.max(0, 4 - apiKeys.length);
-            setStatusMessage(`Vui lòng thêm ${remaining} API Key nữa để bắt đầu (Yêu cầu tối thiểu 4).`);
+            const remaining = Math.max(0, 2 - apiKeys.length);
+            setStatusMessage(`Vui lòng thêm ${remaining} API Key nữa để bắt đầu (Yêu cầu tối thiểu 2).`);
         } else {
             switch(appStage) {
                 case 'upload':
@@ -86,6 +91,43 @@ function App() {
             }
         }
     }, [isAppReady, appStage, apiKeys]);
+
+    // Effect to fetch Announcement from Google Sheet
+    useEffect(() => {
+        const fetchAnnouncement = async () => {
+            try {
+                const response = await fetch('https://docs.google.com/spreadsheets/d/e/2PACX-1vQNS3-25sKdmP3r4lzVhuRzon9f8q-gbqgsclgQ8sajtTcrgHtDoHgLxNIKVXz4DaKbjmqy5EK6y3I2/pub?gid=436682251&single=true&output=csv');
+                if (response.ok) {
+                    const csvText = await response.text();
+                    const rows = csvText.split(/\r?\n/);
+                    if (rows.length > 1) {
+                        // Get row 2 (index 1)
+                        const row = rows[1];
+                        let message = "";
+                        // Handle basic CSV quoting
+                        if (row.startsWith('"')) {
+                            const match = row.match(/^"((?:[^"]|"")*)"/);
+                            if (match) {
+                                message = match[1].replace(/""/g, '"');
+                            } else {
+                                message = row.split(',')[0];
+                            }
+                        } else {
+                            message = row.split(',')[0];
+                        }
+                        
+                        if (message && message.trim()) {
+                            setAnnouncement(message.trim());
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching announcement:", error);
+            }
+        };
+
+        fetchAnnouncement();
+    }, []);
     
     const handleLoginSuccess = () => {
         setIsAuthenticated(true);
@@ -111,7 +153,7 @@ function App() {
                 setApiKeyError(null);
             }
 
-            if (newKeys.length >= 4) {
+            if (newKeys.length >= 2) {
                 setIsAppReady(true);
             }
         }
@@ -122,7 +164,7 @@ function App() {
         setApiKeys(newKeys);
         localStorage.setItem('apiKeys', JSON.stringify(newKeys));
         
-        if (newKeys.length < 4) {
+        if (newKeys.length < 2) {
             setIsAppReady(false);
         }
 
@@ -144,7 +186,7 @@ function App() {
         setApiKeyError(null);
         if(closeModal) setIsApiModalOpen(false);
         
-        if (apiKeys.length >= 4) {
+        if (apiKeys.length >= 2) {
             setIsAppReady(true);
         }
     };
@@ -237,17 +279,17 @@ function App() {
     }
 
     return (
-        <div className="bg-slate-100 min-h-screen flex flex-col">
+        <div className="bg-slate-100 min-h-screen flex flex-col relative">
             <ApiKeyManagerModal
                 isOpen={isApiModalOpen || !isAppReady}
-                onClose={() => { if (apiKeys.length >= 4) setIsApiModalOpen(false) }}
+                onClose={() => { if (apiKeys.length >= 2) setIsApiModalOpen(false) }}
                 keys={apiKeys}
                 activeKey={activeApiKey}
                 onAddKey={handleAddApiKey}
                 onDeleteKey={handleDeleteApiKey}
                 onSetActiveKey={handleSetActiveApiKey}
                 errorMessage={apiKeyError}
-                isClosable={apiKeys.length >= 4}
+                isClosable={apiKeys.length >= 2}
             />
 
             <header className="no-print shadow-md bg-white">
@@ -271,6 +313,16 @@ function App() {
                         </div>
                     </div>
                 </div>
+
+                {/* Announcement Bar */}
+                {announcement && (
+                    <div className="bg-yellow-100 text-yellow-900 border-b border-yellow-200 h-8 flex items-center overflow-hidden relative">
+                         <div className="animate-marquee whitespace-nowrap">
+                             <span className="font-bold mr-4 inline-flex items-center"><MegaphoneIcon className="w-4 h-4 mr-1"/> THÔNG BÁO:</span>
+                             {announcement}
+                        </div>
+                    </div>
+                )}
 
                 {/* Status bar */}
                 <div className="bg-primary-700 text-primary-50">
@@ -309,6 +361,11 @@ function App() {
                     </div>
                 </div>
             </footer>
+            
+            {/* Chatbot Component */}
+            <div className="no-print">
+                <Chatbot />
+            </div>
         </div>
     );
 }

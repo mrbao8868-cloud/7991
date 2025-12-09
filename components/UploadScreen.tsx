@@ -1,7 +1,6 @@
-
 import React, { useRef, useState, useEffect } from 'react';
 import { DocumentArrowUpIcon, CheckIcon, SparkleIcon, ExclamationTriangleIcon, ArrowTopRightOnSquareIcon, DocumentTextIcon } from './icons';
-import { InitialAnalysisResult, RateLimitError, ApiKeyRequiredError, GenerationOptions, TocItem } from '../types';
+import { InitialAnalysisResult, RateLimitError, ApiKeyRequiredError, GenerationOptions, TocItem, GenerationMode } from '../types';
 import { processPdfToImages } from '../utils/pdfProcessor';
 import { analyzeDocumentCover, extractTableOfContents } from '../services/geminiService';
 
@@ -67,8 +66,9 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
     const [isDragging, setIsDragging] = useState(false);
     
     // Workflow State
-    type Step = 'upload' | 'toc_input' | 'processing_toc' | 'selecting_topics' | 'finalizing';
+    type Step = 'upload' | 'mode_selection' | 'toc_input' | 'processing_toc' | 'selecting_topics' | 'finalizing';
     const [step, setStep] = useState<Step>('upload');
+    const [generationMode, setGenerationMode] = useState<GenerationMode>('generate');
     
     // TOC Input State
     const [tocStartPage, setTocStartPage] = useState<string>('');
@@ -82,6 +82,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
     const [error, setError] = useState<string | null>(null);
     const [rateLimitError, setRateLimitError] = useState<string | null>(null);
 
+
     useEffect(() => {
         if (processingStatus) {
             onStatusUpdate(processingStatus);
@@ -94,11 +95,11 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
                 setSelectedFile(files[0]);
                 setError(null);
                 setRateLimitError(null);
-                setStep('toc_input');
+                setStep('mode_selection');
                 // Reset inputs
                 setTocStartPage('');
                 setTocEndPage('');
-                setProcessingStatus('Vui lòng nhập trang chứa Mục lục.');
+                setProcessingStatus('Vui lòng chọn chế độ tạo đề.');
             } else {
                 setError('Vui lòng chỉ tải lên tệp PDF.');
                 setSelectedFile(null);
@@ -106,7 +107,51 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         }
     };
     
-    // Step 2: Analyze ONLY the TOC pages
+    const handleModeSelect = (mode: GenerationMode) => {
+        setGenerationMode(mode);
+        if (mode === 'extract') {
+            // For extraction, we skip TOC and go straight to processing everything
+            handleProcessFullExtraction();
+        } else {
+            // For standard generation, ask for TOC
+            setStep('toc_input');
+            setProcessingStatus('Vui lòng nhập trang chứa Mục lục.');
+        }
+    };
+
+    // Step: Process Full Document for Extraction (Skip TOC)
+    const handleProcessFullExtraction = async () => {
+        if (!selectedFile || !activeApiKey) return;
+        setStep('finalizing');
+        setProcessingStatus('Đang đọc toàn bộ đề cương...');
+        
+        try {
+            // Process all pages
+            const allImages = await processPdfToImages(selectedFile);
+            
+            setProcessingStatus('Đang lấy thông tin bìa...');
+            const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
+            const coverResult = await analyzeDocumentCover(keysToTry, onSetActiveKey, allImages[0]);
+
+            const generationOptions: GenerationOptions = {
+                mode: 'extract',
+                selectedTopics: [] // Empty means process everything
+            };
+            
+            onAnalysisComplete(coverResult, allImages, generationOptions);
+        } catch (e: unknown) {
+            const errorMessage = e instanceof Error ? e.message : "Lỗi khi xử lý đề cương.";
+             setError(errorMessage);
+             setStep('mode_selection'); // Go back
+             if (e instanceof RateLimitError) {
+                setRateLimitError(errorMessage);
+            } else if (e instanceof ApiKeyRequiredError) {
+                onApiKeyError(e.message);
+            }
+        }
+    };
+
+    // Step 2: Analyze ONLY the TOC pages (Standard Mode)
     const handleAnalyzeToc = async () => {
         if (!selectedFile || !activeApiKey) return;
         
@@ -124,7 +169,6 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         
         try {
             setProcessingStatus(`Đang đọc trang ${start} đến ${end}...`);
-            // Only process the specific TOC pages to save memory and API quota
             const tocImages = await processPdfToImages(selectedFile, start, end);
 
             setProcessingStatus('AI đang phân tích cấu trúc Mục lục...');
@@ -181,7 +225,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         }
     };
 
-    // Step 3: Finalize - Process full document and cover
+    // Step 3: Finalize - Process full document and cover (Standard Mode)
     const handleConfirmSelection = async () => {
         if (!selectedFile || !activeApiKey) return;
         
@@ -196,18 +240,15 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         setProcessingStatus('Đang chuẩn bị dữ liệu nội dung...');
 
         try {
-            // Now we process the rest of the document (or all of it) so the ExamWorkspace has context
-            // This is done on client side so no API quota used yet
+            // Process full document
             const allImages = await processPdfToImages(selectedFile);
             
-            // Quickly analyze cover (Page 1) for metadata
             setProcessingStatus('Đang lấy thông tin bìa...');
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
-            
-            // Analyze only the first page for the cover info
             const coverResult = await analyzeDocumentCover(keysToTry, onSetActiveKey, allImages[0]);
 
             const generationOptions: GenerationOptions = {
+                mode: 'generate',
                 selectedTopics: selectedTopics
             };
             
@@ -236,13 +277,62 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
                 message={rateLimitError}
                 onRetry={() => {
                     setRateLimitError(null);
-                    setStep('toc_input');
+                    setStep('mode_selection');
                 }}
             />
         );
     }
 
-    // View: 2. Input TOC Pages
+    // View: 1.5 Mode Selection
+    if (step === 'mode_selection') {
+         return (
+            <div className="max-w-2xl mx-auto text-center">
+                 <div className="bg-white p-8 rounded-xl shadow-lg border border-slate-200">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-100">
+                        <DocumentTextIcon className="h-6 w-6 text-primary-600" aria-hidden="true" />
+                    </div>
+                    <h3 className="mt-4 text-xl font-bold text-slate-900">Chọn chế độ tạo đề</h3>
+                    <p className="mt-2 text-sm text-slate-500">
+                        Bạn muốn tạo đề mới từ tài liệu tham khảo (SGK) hay trích xuất câu hỏi từ đề cương có sẵn?
+                    </p>
+
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <button
+                            onClick={() => handleModeSelect('generate')}
+                            className="flex flex-col items-center justify-center p-6 border-2 border-slate-200 rounded-xl hover:border-primary-500 hover:bg-primary-50 transition-all group"
+                        >
+                            <SparkleIcon className="w-10 h-10 text-slate-400 group-hover:text-primary-600 mb-3" />
+                            <span className="font-bold text-slate-800">Tạo đề từ SGK/Tài liệu</span>
+                            <span className="text-xs text-slate-500 mt-2">AI sẽ đọc nội dung và tự sáng tạo câu hỏi mới theo ma trận.</span>
+                        </button>
+
+                        <button
+                            onClick={() => handleModeSelect('extract')}
+                            className="flex flex-col items-center justify-center p-6 border-2 border-slate-200 rounded-xl hover:border-primary-500 hover:bg-primary-50 transition-all group"
+                        >
+                            <DocumentArrowUpIcon className="w-10 h-10 text-slate-400 group-hover:text-primary-600 mb-3" />
+                            <span className="font-bold text-slate-800">Trích xuất từ Đề cương</span>
+                            <span className="text-xs text-slate-500 mt-2">AI sẽ quét và lấy toàn bộ câu hỏi có sẵn trong file đề cương.</span>
+                        </button>
+                    </div>
+
+                    <div className="mt-8">
+                        <button
+                            onClick={() => {
+                                setStep('upload');
+                                setSelectedFile(null);
+                            }}
+                            className="text-sm text-slate-500 hover:text-slate-700 underline"
+                        >
+                            Chọn file khác
+                        </button>
+                    </div>
+                 </div>
+            </div>
+         );
+    }
+
+    // View: 2. Input TOC Pages (Standard Mode Only)
     if (step === 'toc_input') {
          return (
             <div className="max-w-xl mx-auto text-center">
@@ -287,12 +377,11 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
                     <div className="mt-8 flex gap-3">
                         <button
                             onClick={() => {
-                                setStep('upload');
-                                setSelectedFile(null);
+                                setStep('mode_selection');
                             }}
                             className="flex-1 px-4 py-2 border border-slate-300 shadow-sm text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50"
                         >
-                            Chọn file khác
+                            Quay lại
                         </button>
                         <button
                             onClick={handleAnalyzeToc}
@@ -329,7 +418,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         return (
             <div className="max-w-3xl mx-auto text-center">
                 <h3 className="text-xl font-semibold text-slate-800">Đang khởi tạo môi trường làm việc...</h3>
-                <p className="text-slate-500 mt-2">Ứng dụng đang chuẩn bị nội dung chi tiết cho các bài học đã chọn.</p>
+                <p className="text-slate-500 mt-2">Ứng dụng đang chuẩn bị dữ liệu nội dung.</p>
                 <div className="mt-8 flex justify-center">
                     <div className="flex items-center space-x-3">
                         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
@@ -342,7 +431,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
         );
     }
 
-    // View: 4. Topic Selection
+    // View: 4. Topic Selection (Standard Mode Only)
     if (step === 'selecting_topics') {
         return (
             <div className="max-w-4xl mx-auto text-center">
@@ -413,7 +502,7 @@ const UploadScreen: React.FC<UploadScreenProps> = ({ apiKeys, activeApiKey, onAn
     // View: 1. Upload (Initial)
     return (
         <div className="max-w-3xl mx-auto text-center">
-            <p className="text-slate-600 mb-6">Hãy tải lên tệp PDF. Sau đó bạn có thể chọn trang chứa Mục lục để AI phân tích nhanh.</p>
+            <p className="text-slate-600 mb-6">Hãy tải lên tệp PDF. Sau đó bạn có thể chọn chế độ tạo đề.</p>
             
             <div
                 onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
