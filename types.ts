@@ -133,7 +133,7 @@ export interface SpecTopic {
   objectives: ObjectiveSpec[];
 }
 
-export type WorkspaceTab = 'matrix' | 'spec' | 'questions';
+export type WorkspaceTab = 'matrix' | 'spec' | 'questions' | 'export';
 
 export interface ExamConfig {
     schoolName: string;

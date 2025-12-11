@@ -602,6 +602,9 @@ const generateQuestionsForObjective = async (
           - Display Example: A question asking for a formula might have "$$\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$" on its own line in the 'text' field.
           - Chemistry Example: "Công thức của nước là \\(\\ce{H2O}\\)"
         - IMPORTANT: Do NOT use LaTeX for simple numbers or plain text (e.g., "Câu 1", "3,0 điểm"). Only use it for formulas, equations, and mathematical notations.
+        - **IMPORTANT: DO NOT add spaces between the backslash and the delimiter.** 
+          - INCORRECT: "\\ [", "\\ (", "\\ ]"
+          - CORRECT: "\\[", "\\(", "\\]"
     `;
     
     // Prepare image parts for extraction
@@ -830,6 +833,101 @@ export const generateAllQuestionsForTopics = async (
         throw masterError;
     }
 };
+
+/**
+ * Uses AI to review and standardize formula formatting in a batch of text strings.
+ */
+export const standardizeExamContent = async (
+    keysToTry: string[],
+    onKeyRotated: (newKey: string) => void,
+    textsToStandardize: string[],
+    onProgress?: (processedCount: number, totalCount: number) => void
+): Promise<string[]> => {
+    const BATCH_SIZE = 15; // Process 15 strings per call to be safe with limits and speed
+    const standardizedTexts: string[] = new Array(textsToStandardize.length).fill('');
+    const batches = [];
+
+    // Create batches
+    for (let i = 0; i < textsToStandardize.length; i += BATCH_SIZE) {
+        batches.push({
+            indices: Array.from({ length: Math.min(BATCH_SIZE, textsToStandardize.length - i) }, (_, k) => i + k),
+            texts: textsToStandardize.slice(i, i + BATCH_SIZE)
+        });
+    }
+
+    let completed = 0;
+
+    for (const batch of batches) {
+        try {
+            const prompt = `
+                You are a LaTeX expert for Vietnamese educational materials (Math, Physics, Chemistry).
+                Your task is to CONVERT and STANDARDIZE the provided text strings into proper mathematical/chemical notation.
+
+                INPUT: An array of strings that may contain plain text math (e.g., "x^2", "H2O") or raw LaTeX (e.g., "\\(3s^2\\)").
+                OUTPUT: An array of strings where ALL formulas are strictly formatted in standard LaTeX wrappers.
+
+                RULES:
+                1. **Identify Formulas:** Find any math expressions (equations, numbers with units, variables) or chemical formulas.
+                2. **Convert to LaTeX:**
+                   - Plain Math: "x2 + 2x" -> "\\(x^2 + 2x\\)"
+                   - Plain Chemistry: "H2SO4" -> "\\(\\ce{H2SO4}\\)"
+                   - Electron Config: "1s2 2s2" -> "\\(1s^2 2s^2\\)"
+                   - Isotopes: "23Na" -> "\\(\\ce{^{23}Na}\\)"
+                3. **Fix Existing LaTeX:**
+                   - Clean up bad spacing: "\\ ( x \\ )" -> "\\(x\\)"
+                   - Ensure wrapper consistency: Use "\\(...\\)" for inline math.
+                   - Ensure Chemistry uses "\\ce{...}" inside the wrapper.
+                4. **Preserve Text:** Do NOT change the Vietnamese text content. Only format the scientific notations.
+                5. **Return JSON:** Return a strictly valid JSON Array of strings.
+
+                Input Array:
+                ${JSON.stringify(batch.texts)}
+            `;
+
+            const response: GenerateContentResponse = await withRetry(keysToTry, onKeyRotated, (ai) => {
+                return ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: prompt,
+                    config: {
+                        systemInstruction: "You are a specialized AI text formatter. You fix LaTeX syntax and convert plain scientific text to LaTeX. Return valid JSON only.",
+                        responseMimeType: 'application/json',
+                        responseSchema: {
+                            type: Type.ARRAY,
+                            items: { type: Type.STRING }
+                        }
+                    }
+                });
+            }, "Chuẩn hóa công thức");
+
+            const processedBatch = JSON.parse(response.text);
+            
+            if (Array.isArray(processedBatch) && processedBatch.length === batch.indices.length) {
+                batch.indices.forEach((globalIndex, localIndex) => {
+                    standardizedTexts[globalIndex] = processedBatch[localIndex];
+                });
+            } else {
+                console.warn("AI returned mismatched array length for batch. Falling back to original text.");
+                batch.indices.forEach((globalIndex, localIndex) => {
+                    standardizedTexts[globalIndex] = batch.texts[localIndex];
+                });
+            }
+
+        } catch (error) {
+            console.error("Error standardizing batch, keeping original:", error);
+            batch.indices.forEach((globalIndex, localIndex) => {
+                standardizedTexts[globalIndex] = batch.texts[localIndex];
+            });
+        }
+        
+        completed += batch.indices.length;
+        if (onProgress) onProgress(completed, textsToStandardize.length);
+        // Small delay to be gentle on rate limits
+        await delay(500); 
+    }
+
+    return standardizedTexts;
+}
+
 
 export const sendChatMessage = async (
     apiKey: string,

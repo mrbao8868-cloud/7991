@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect } from 'react';
 
 // Declare KaTeX's auto-render function and our custom flag on the global window object for TypeScript.
@@ -11,13 +12,45 @@ declare global {
 const MathRenderer: React.FC<{ content: string, className?: string }> = ({ content, className }) => {
     const containerRef = useRef<HTMLSpanElement>(null);
 
+    // Pre-process content to fix common AI formatting errors
+    const formatContent = (raw: string) => {
+        if (!raw) return '';
+        let processed = raw;
+
+        // 1. Fix broken delimiters often output by AI (e.g., "\ [" instead of "\[")
+        processed = processed.replace(/\\\s+\[/g, '\\['); // Fix \ [ -> \[
+        processed = processed.replace(/\\\s+\]/g, '\\]'); // Fix \ ] -> \]
+        processed = processed.replace(/\\\s+\(/g, '\\('); // Fix \ ( -> \(
+        processed = processed.replace(/\\\s+\)/g, '\\)'); // Fix \ ) -> \)
+
+        // 2. Wrap standalone \ce{...} commands in \( ... \) so KaTeX can render them.
+        // This regex matches \ce{...} allowing for whitespace like \ce { H2O } and simple nested braces.
+        // We attempt to avoid double-wrapping if it's already wrapped.
+        processed = processed.replace(/(\\ce\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})/g, (match, p1, offset, string) => {
+             // Simple check to see if it's likely already inside a delimiter
+             const preceding = string.slice(Math.max(0, offset - 5), offset);
+             if (preceding.match(/\\\($/) || preceding.match(/\\\[$/) || preceding.match(/\$\$$/)) {
+                 return match;
+             }
+             return `\\(${match}\\)`;
+        });
+
+        // 3. Clean up any accidental double wrappers like \( \( \ce{...} \) \)
+        processed = processed.replace(/\\\(\s*\\\(\s*\\ce/g, '\\(\\ce');
+        processed = processed.replace(/\\\}\s*\\\)\s*\\\)/g, '\\}\\)');
+
+        return processed;
+    };
+
+    const formattedContent = formatContent(content);
+
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
 
-        // Set the raw text content first. This ensures that if KaTeX fails,
-        // the raw formula is still visible to the user.
-        container.textContent = content;
+        // Set the text content directly.
+        // CSS 'white-space: pre-wrap' handles the newlines ('\n') automatically.
+        container.innerText = formattedContent || '';
 
         const render = () => {
             if (container && typeof window.renderMathInElement === 'function') {
@@ -30,36 +63,34 @@ const MathRenderer: React.FC<{ content: string, className?: string }> = ({ conte
                             { left: '\\(', right: '\\)', display: false },
                             { left: '$', right: '$', display: false }
                         ],
-                        // Do not throw an error on parsing failure, just log it.
-                        throwOnError: false
+                        throwOnError: false,
+                        // Allow mhchem to work
+                        trust: true,
+                        strict: false
                     });
                 } catch (e) {
                     console.error("MathRenderer: Error during KaTeX rendering:", e);
                 }
-            } else if (container) {
-                // This error occurs if the KaTeX auto-render script failed to load or define the function.
-                console.error("MathRenderer: Render was called, but 'window.renderMathInElement' is not available.");
             }
         };
 
-        // If the KaTeX ready flag is already set, render immediately.
         if (window.KATE_IS_READY) {
             render();
             return;
         }
 
-        // Otherwise, wait for our custom 'katex-ready' event.
-        // The 'once: true' option ensures the listener is automatically removed after firing.
         document.addEventListener('katex-ready', render, { once: true });
-
-        // Cleanup: remove the event listener if the component unmounts before the event fires.
         return () => {
             document.removeEventListener('katex-ready', render);
         };
-    }, [content]); // Re-run the effect if the content changes.
+    }, [formattedContent]); 
 
     return (
-        <span ref={containerRef} className={className} />
+        <span 
+            ref={containerRef} 
+            className={className}
+            style={{ whiteSpace: 'pre-wrap', display: 'inline-block' }} 
+        />
     );
 };
 
