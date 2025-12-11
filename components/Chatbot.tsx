@@ -3,10 +3,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ChatBubbleLeftRightIcon, PaperAirplaneIcon, SparkleIcon } from './icons';
 import { sendChatMessage } from '../services/geminiService';
 
-// Dedicated API Key for Support Chatbot only
-const SUPPORT_CHAT_API_KEY = 'AIzaSyBnv9MQsHhMfcDY9RMhidMb8mZ6A3DK25o';
+interface ChatbotProps {
+    activeApiKey: string | null;
+}
 
-const Chatbot: React.FC = () => {
+const Chatbot: React.FC<ChatbotProps> = ({ activeApiKey }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -32,6 +33,16 @@ const Chatbot: React.FC = () => {
     const handleSend = async () => {
         if (!input.trim()) return;
 
+        // Check if API key is available from the main app
+        if (!activeApiKey) {
+            setMessages(prev => [...prev, { 
+                id: crypto.randomUUID(), 
+                role: 'model', 
+                text: 'Vui lòng nhập và kích hoạt API Key trong ứng dụng chính trước khi sử dụng Chatbot.' 
+            }]);
+            return;
+        }
+
         const userMessage = { id: crypto.randomUUID(), role: 'user', text: input };
         setMessages(prev => [...prev, userMessage]);
         setInput('');
@@ -45,14 +56,14 @@ const Chatbot: React.FC = () => {
                 parts: [{ text: m.text }]
             }));
 
-            // Use the dedicated support key
-            const responseText = await sendChatMessage(SUPPORT_CHAT_API_KEY, history, userMessage.text);
+            // Use the user's active API key
+            const responseText = await sendChatMessage(activeApiKey, history, userMessage.text);
             
             setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: responseText }]);
 
         } catch (error) {
             console.error("Chat error:", error);
-            setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: 'Đã xảy ra lỗi kết nối với máy chủ hỗ trợ. Vui lòng thử lại sau.' }]);
+            setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'model', text: 'Đã xảy ra lỗi kết nối với AI (API Key có thể bị lỗi hoặc hết hạn ngạch). Vui lòng kiểm tra lại Key.' }]);
         } finally {
             setIsLoading(false);
         }

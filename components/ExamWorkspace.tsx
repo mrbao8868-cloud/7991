@@ -1,23 +1,9 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec, GenerationOptions } from '../types';
 import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, SparkleIcon, KeyIcon, ChevronDownIcon, DocumentArrowUpIcon } from './icons';
 import { generateAllQuestionsForTopics, generateSpecification, generateMatrixFromImages, standardizeExamContent } from '../services/geminiService';
 import MathRenderer from './MathRenderer';
-
-interface ExamWorkspaceProps {
-    examConfig: ExamConfig;
-    documentImages: string[];
-    generationOptions: GenerationOptions | null;
-    apiKeys: string[];
-    activeApiKey: string | null;
-    onBack: () => void;
-    onApiKeyError: (message?: string) => void;
-    onSetActiveKey: (key: string) => void;
-    onOpenApiModal: () => void;
-    onStatusUpdate: (message: string) => void;
-}
 
 // Declare global katex for TS
 declare global {
@@ -141,6 +127,18 @@ const Stepper: React.FC<{ activeTab: WorkspaceTab; matrixDone: boolean; specDone
     );
 };
 
+interface ExamWorkspaceProps {
+    examConfig: ExamConfig;
+    documentImages: string[];
+    generationOptions: GenerationOptions | null;
+    apiKeys: string[];
+    activeApiKey: string | null;
+    onBack: () => void;
+    onApiKeyError: (message?: string) => void;
+    onSetActiveKey: (key: string) => void;
+    onOpenApiModal: () => void;
+    onStatusUpdate: (message: string) => void;
+}
 
 const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImages, generationOptions, apiKeys, activeApiKey, onBack, onApiKeyError, onSetActiveKey, onOpenApiModal, onStatusUpdate }) => {
     // Workspace state
@@ -217,7 +215,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             return;
         }
         if (isProcessingFormulas) {
-            onStatusUpdate(`Đang rà soát và chuẩn hóa công thức với AI... (${Math.round(formulaProgress)}%)`);
+            onStatusUpdate(`Đang rà soát và chuyển đổi công thức về dạng văn bản thường... (${Math.round(formulaProgress)}%)`);
             return;
         }
         if (isExporting) {
@@ -439,6 +437,18 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         // Fix weird \ce spacing like "\ ce" -> "\ce"
         processed = processed.replace(/\\\s+ce/g, '\\ce'); 
 
+        // 2. CRITICAL: Force wrap bare chemical formulas if AI missed them
+        // Matches \ce{...} that is NOT preceded by \( or \[ or $
+        // and NOT followed by \) or \] or $
+        // This is a safety net.
+        processed = processed.replace(/(?<!\\[(\[])\\ce\{.*?\}(?!\\[)\]])/g, (match) => {
+             return `\\(${match}\\)`;
+        });
+        
+        // 3. Replace single $ with \( \)
+        processed = processed.replace(/(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)/g, '\\($1\\)');
+
+
         const render = (tex: string, display: boolean) => {
             try {
                  // Clean up newlines which can break KaTeX
@@ -498,15 +508,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         // Replace Inline Math \(...\)
         processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (m, t) => render(t, false));
         
-        // Replace Inline Math $...$ (careful not to match currency)
-        processed = processed.replace(/\$([^\$\n]+?)\$/g, (m, t) => {
-            // Only render if it looks like math (has =, ^, _, \, or numbers)
-            if (/[=\^_{}\\]/.test(t) || /\d/.test(t) || t.includes('\\ce')) { 
-                 return render(t, false);
-            }
-            return m;
-        });
-
         // Convert newlines to breaks for HTML display
         return processed.replace(/\n/g, '<br/>');
     };
@@ -1062,7 +1063,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <div className="space-y-6">
                                     <h2 className="text-xl font-bold text-center mb-4 uppercase">B. BẢN ĐẶC TẢ ĐỀ KIỂM TRA</h2>
                                     <div className="overflow-x-auto">
-                                        <table className="w-full border-collapse border border-slate-400 text-sm">
+                                        <table id="spec-table" className="w-full border-collapse border border-slate-400 text-sm">
                                             <thead className="bg-slate-50 font-semibold">
                                                 <tr>
                                                     <th rowSpan={2} className="border border-slate-300 p-2 w-[15%]">Chương/Chủ đề</th>
@@ -1105,6 +1106,13 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                             </tbody>
                                         </table>
                                     </div>
+
+                                    <div className="mt-4 flex justify-end">
+                                        <button onClick={() => handleDownloadXls('spec-table', 'ban_dac_ta.xls')} className="text-sm text-primary-600 hover:text-primary-800 font-medium flex items-center">
+                                            <DocumentArrowDownIcon className="w-4 h-4 mr-1"/> Tải Bản đặc tả (Excel)
+                                        </button>
+                                    </div>
+
                                     <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end gap-3 no-print">
                                         <button onClick={() => setActiveTab('matrix')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50">
                                             Quay lại Ma trận
@@ -1157,7 +1165,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <GenerationPlaceholder 
                                     isLoading={true} 
                                     title="Đang chuẩn hóa công thức" 
-                                    description="Hệ thống đang quét toàn bộ câu hỏi và sử dụng AI để chuẩn hóa mã LaTeX/MathML. Vui lòng không tắt trình duyệt..."
+                                    description="Hệ thống đang quét toàn bộ câu hỏi và sử dụng AI để chuyển đổi về dạng văn bản thường..."
                                     progress={formulaProgress}
                                 />
                             ) : (
@@ -1282,7 +1290,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                         className="inline-flex items-center px-3 py-2 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 disabled:bg-slate-200 disabled:text-slate-400"
                                     >
                                         {isProcessingFormulas ? <SmallSpinner className="mr-2" /> : <SparkleIcon className="w-4 h-4 mr-2" />}
-                                        {isProcessingFormulas ? 'Đang xử lý...' : 'Chuyển đổi công thức (AI)'}
+                                        {isProcessingFormulas ? 'Đang xử lý...' : 'Chuyển về dạng thường'}
                                     </button>
                                     <button 
                                         onClick={handleCopyToClipboard}
@@ -1293,17 +1301,16 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                     </button>
                                     <button 
                                         onClick={handleDownloadDocx}
-                                        disabled={isExporting}
-                                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-slate-400"
+                                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                                     >
-                                        {isExporting ? <SmallSpinner className="text-white mr-2"/> : <DocumentArrowDownIcon className="w-5 h-5 mr-2"/>}
-                                        {isExporting ? 'Đang tải...' : 'Tải file Word (.doc)'}
+                                        <DocumentArrowDownIcon className="w-5 h-5 mr-2"/>
+                                        Tải file Word
                                     </button>
                                 </div>
                             </div>
                             
-                            <div className="border border-slate-300 shadow-md bg-white p-8 min-h-[1000px] mx-auto w-full max-w-[21cm]" style={{ fontFamily: '"Times New Roman", serif', fontSize: '13pt', lineHeight: 1.5 }}>
-                                <div id="exam-export-preview" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                            <div className="bg-white p-8 border border-slate-200 shadow-sm rounded-lg min-h-[800px] print:border-0 print:shadow-none">
+                                <div id="exam-export-preview" dangerouslySetInnerHTML={{ __html: previewHtml || generateExamHtmlContent() }} />
                             </div>
                         </div>
                     )}

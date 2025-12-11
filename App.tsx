@@ -291,6 +291,8 @@ function App() {
                 errorMessage={apiKeyError}
                 isClosable={apiKeys.length >= 2}
             />
+            
+            <Chatbot activeApiKey={activeApiKey} />
 
             <header className="no-print shadow-md bg-white">
                 {/* Top bar with Logo, Title, and Banner Info */}
@@ -361,11 +363,6 @@ function App() {
                     </div>
                 </div>
             </footer>
-            
-            {/* Chatbot Component */}
-            <div className="no-print">
-                <Chatbot />
-            </div>
         </div>
     );
 }

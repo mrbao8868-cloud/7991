@@ -101,32 +101,66 @@ export async function withRetry<T>(
 function safeParseQuestionsJson(jsonText: string): any[] {
     let cleanText = jsonText.trim();
     
-    // 1. Try standard parse first
+    // 1. Try standard parse first (best case)
     try {
-        return JSON.parse(cleanText);
+        const parsed = JSON.parse(cleanText);
+        if (Array.isArray(parsed)) return parsed;
+        // If it returns an object that wraps questions (e.g. { questions: [...] }), try to extract
+        if (typeof parsed === 'object' && parsed !== null) {
+             const values = Object.values(parsed);
+             const arrayVal = values.find(v => Array.isArray(v));
+             if (arrayVal) return arrayVal as any[];
+        }
     } catch (e) {
         // Proceed to recovery
     }
 
-    // 2. Strip potential markdown code blocks (```json ... ```)
-    cleanText = cleanText.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
-
-    try {
-        return JSON.parse(cleanText);
-    } catch (e) {
-        // Proceed to truncation recovery
+    // 2. Extract JSON from markdown code blocks
+    // Look for ```json ... ``` or just ``` ... ``` and capture content
+    const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
+    const match = cleanText.match(codeBlockRegex);
+    if (match) {
+        cleanText = match[1].trim();
+        try {
+            const parsed = JSON.parse(cleanText);
+            if (Array.isArray(parsed)) return parsed;
+            if (typeof parsed === 'object' && parsed !== null) {
+                 const values = Object.values(parsed);
+                 const arrayVal = values.find(v => Array.isArray(v));
+                 if (arrayVal) return arrayVal as any[];
+            }
+        } catch (e) {
+            // Continue if extraction failed to produce valid JSON
+        }
     }
 
-    // 3. Handle truncation - Try to find the last valid array closure
-    if (cleanText.startsWith('[')) {
-        // Find the last closing brace '}' which signifies end of an object
-        let endIndex = cleanText.lastIndexOf('}');
+    // 3. Heuristic: Find first '[' and last ']' to isolate the array
+    const start = cleanText.indexOf('[');
+    const end = cleanText.lastIndexOf(']');
+    
+    if (start !== -1 && end !== -1 && end > start) {
+        const bracketContent = cleanText.substring(start, end + 1);
+        try {
+             const parsed = JSON.parse(bracketContent);
+             if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+            // Check for truncation if this fails
+        }
+    }
+
+    // 4. Handle truncation - Try to find the last valid array closure within the extracted block
+    if (start !== -1) {
+        // We work with the substring starting from '['
+        const arrayStartText = cleanText.substring(start);
         
-        // Attempt to backtrack and find a valid array end
+        // Find the last closing brace '}' which signifies end of an object
+        let endIndex = arrayStartText.lastIndexOf('}');
+        
         let attempts = 0;
-        // Search backwards up to 20 objects deep to find a valid JSON structure
+        // Search backwards up to 50 objects deep to find a valid JSON structure
         while (endIndex > 0 && attempts < 50) {
-            const attemptStr = cleanText.substring(0, endIndex + 1) + ']';
+            // Try closing the array at this object
+            const attemptStr = arrayStartText.substring(0, endIndex + 1) + ']';
             try {
                 const parsed = JSON.parse(attemptStr);
                 if (Array.isArray(parsed)) {
@@ -137,7 +171,7 @@ function safeParseQuestionsJson(jsonText: string): any[] {
                 // Invalid JSON, likely cut in middle of object or structure invalid
             }
             // Move back to previous '}'
-            endIndex = cleanText.lastIndexOf('}', endIndex - 1);
+            endIndex = arrayStartText.lastIndexOf('}', endIndex - 1);
             attempts++;
         }
     }
@@ -591,20 +625,18 @@ const generateQuestionsForObjective = async (
         : `For Essay questions, provide a detailed model answer. The answer MUST be structured as a list of bullet points (using '-'). Each bullet point should represent a key idea or a part of the solution. You MUST suggest a reasonable point value for each bullet point, formatted like this: "- [Nội dung chính] (0.25 điểm)".`;
 
     const latexInstruction = `
-        - CRITICAL: For ALL mathematical and chemical expressions, you MUST use standard, correct LaTeX syntax.
-        - For INLINE math (expressions within a paragraph), enclose them in \\(...\\).
-        - For DISPLAY math (formulas on their own line), enclose them in $$...$$.
-        - Use standard LaTeX commands: \\(x^2\\) for exponents, \\(\\sqrt{16}\\) for square roots, \\(\\frac{a}{b}\\) for fractions.
-        - For chemical formulas, use the mhchem extension syntax (e.g., \\ce{H2O}, \\ce{Fe^{3+}}, \\ce{2H2 + O2 -> 2H2O}) INSIDE the LaTeX delimiters.
-        - This applies to the 'text', 'options', and 'answer' fields.
-        - The backslashes in the delimiters MUST be correctly escaped for the final JSON output.
-          - Inline Example: "Giá trị của \\(3^4\\) là bao nhiêu?"
-          - Display Example: A question asking for a formula might have "$$\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$" on its own line in the 'text' field.
-          - Chemistry Example: "Công thức của nước là \\(\\ce{H2O}\\)"
-        - IMPORTANT: Do NOT use LaTeX for simple numbers or plain text (e.g., "Câu 1", "3,0 điểm"). Only use it for formulas, equations, and mathematical notations.
-        - **IMPORTANT: DO NOT add spaces between the backslash and the delimiter.** 
-          - INCORRECT: "\\ [", "\\ (", "\\ ]"
-          - CORRECT: "\\[", "\\(", "\\]"
+        - **CRITICAL FORMATTING RULE**: **DO NOT USE LaTeX** for simple chemical formulas or math expressions. Use **Unicode** text ("dạng thường").
+        - **Chemistry**: Use standard Unicode characters.
+          - INCORRECT: \\ce{H2O}, \\(O_2\\), \\ce{Fe^{3+}}, \\ce{NaCl}
+          - CORRECT: H₂O, O₂, Fe³⁺, NaCl
+        - **Math**: Use Unicode for exponents and symbols.
+          - INCORRECT: \\(x^2\\), 30^{\\circ}
+          - CORRECT: x², 30°, π, ≈, ≤, ≥
+        - **Exceptions (Use LaTeX wrapped in \\(...\\))**:
+          - Fractions: \\(\\frac{a}{b}\\)
+          - Roots: \\(\\sqrt{x}\\)
+          - Vectors: \\(\\vec{a}\\)
+        - If you must use LaTeX, ensure JSON escaping is correct.
     `;
     
     // Prepare image parts for extraction
@@ -860,26 +892,23 @@ export const standardizeExamContent = async (
     for (const batch of batches) {
         try {
             const prompt = `
-                You are a LaTeX expert for Vietnamese educational materials (Math, Physics, Chemistry).
-                Your task is to CONVERT and STANDARDIZE the provided text strings into proper mathematical/chemical notation.
-
-                INPUT: An array of strings that may contain plain text math (e.g., "x^2", "H2O") or raw LaTeX (e.g., "\\(3s^2\\)").
-                OUTPUT: An array of strings where ALL formulas are strictly formatted in standard LaTeX wrappers.
+                You are a Vietnamese educational content formatter.
+                TASK: Convert ALL LaTeX math/chemistry formulas to standard Unicode text ("dạng thường") unless it is structurally impossible (like complex fractions).
+                
+                Input: Array of strings.
+                Output: Array of strings with LaTeX removed.
 
                 RULES:
-                1. **Identify Formulas:** Find any math expressions (equations, numbers with units, variables) or chemical formulas.
-                2. **Convert to LaTeX:**
-                   - Plain Math: "x2 + 2x" -> "\\(x^2 + 2x\\)"
-                   - Plain Chemistry: "H2SO4" -> "\\(\\ce{H2SO4}\\)"
-                   - Electron Config: "1s2 2s2" -> "\\(1s^2 2s^2\\)"
-                   - Isotopes: "23Na" -> "\\(\\ce{^{23}Na}\\)"
-                3. **Fix Existing LaTeX:**
-                   - Clean up bad spacing: "\\ ( x \\ )" -> "\\(x\\)"
-                   - Ensure wrapper consistency: Use "\\(...\\)" for inline math.
-                   - Ensure Chemistry uses "\\ce{...}" inside the wrapper.
-                4. **Preserve Text:** Do NOT change the Vietnamese text content. Only format the scientific notations.
-                5. **Return JSON:** Return a strictly valid JSON Array of strings.
-
+                1. **Chemistry**: Convert ALL \\ce{...} tags to Unicode.
+                   - "\\ce{H2SO4}" -> "H₂SO₄"
+                   - "\\(\\ce{Na+}\\)" -> "Na⁺"
+                2. **Math**: Convert LaTeX symbols to Unicode.
+                   - "\\(x^2\\)" -> "x²"
+                   - "\\(30^\\circ\\)" -> "30°"
+                   - "\\(\\pi\\)" -> "π"
+                   - "\\le" -> "≤"
+                3. **Only Keep LaTeX** for vertical structures like fractions (\\frac) or large operators (\\int).
+                
                 Input Array:
                 ${JSON.stringify(batch.texts)}
             `;
@@ -889,7 +918,7 @@ export const standardizeExamContent = async (
                     model: 'gemini-2.5-flash',
                     contents: prompt,
                     config: {
-                        systemInstruction: "You are a specialized AI text formatter. You fix LaTeX syntax and convert plain scientific text to LaTeX. Return valid JSON only.",
+                        systemInstruction: "You are a specialized AI text formatter. You simplify LaTeX syntax to plain text where possible. Return valid JSON only.",
                         responseMimeType: 'application/json',
                         responseSchema: {
                             type: Type.ARRAY,
