@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Topic, SpecTopic, questionKeys, WorkspaceTab, ApiKeyRequiredError, RateLimitError, ExamConfig, TopicConfig, GeneratedMatrixResponse, QuestionType, Question, ObjectiveSpec, GenerationOptions } from '../types';
-import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, SparkleIcon } from './icons';
+import { CheckIcon, DocumentArrowDownIcon, DocumentTextIcon, ExclamationTriangleIcon, SparkleIcon, PencilIcon, TrashIcon } from './icons';
 import { generateAllQuestionsForTopics, generateSpecification, generateMatrixFromImages } from '../services/geminiService';
 import MathRenderer from './MathRenderer';
+import MathKeyboard from './MathKeyboard';
 
 interface ExamWorkspaceProps {
     examConfig: ExamConfig;
@@ -133,6 +134,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     const [specError, setSpecError] = useState<string | null>(null);
     const [questionsError, setQuestionsError] = useState<string | null>(null);
 
+    // Editing State
+    const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+    const [tempQuestion, setTempQuestion] = useState<Question | null>(null);
+    const activeTextareaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+
     const allQuestions = topics.flatMap(t => t.questions || []);
     const exportStepName = '5. Xem & Tải về';
 
@@ -223,6 +229,92 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         } finally { setIsGeneratingQuestions(false); }
     };
 
+    // --- Editing Logic ---
+    const startEditing = (question: Question) => {
+        setEditingQuestionId(question.id);
+        // Deep copy to avoid direct mutation
+        setTempQuestion(JSON.parse(JSON.stringify(question)));
+    };
+
+    const cancelEditing = () => {
+        setEditingQuestionId(null);
+        setTempQuestion(null);
+        activeTextareaRef.current = null;
+    };
+
+    const saveEditing = () => {
+        if (!tempQuestion) return;
+        
+        // Find topic and update question
+        setTopics(prevTopics => prevTopics.map(topic => {
+            const qIndex = topic.questions.findIndex(q => q.id === tempQuestion.id);
+            if (qIndex !== -1) {
+                const newQuestions = [...topic.questions];
+                newQuestions[qIndex] = tempQuestion;
+                return { ...topic, questions: newQuestions };
+            }
+            return topic;
+        }));
+        
+        setEditingQuestionId(null);
+        setTempQuestion(null);
+        activeTextareaRef.current = null;
+    };
+
+    const handleTempChange = (field: keyof Question, value: any) => {
+        if (!tempQuestion) return;
+        setTempQuestion({ ...tempQuestion, [field]: value });
+    };
+
+    const handleOptionChange = (idx: number, value: string) => {
+        if (!tempQuestion || !tempQuestion.options) return;
+        const newOptions = [...tempQuestion.options];
+        newOptions[idx] = value;
+        setTempQuestion({ ...tempQuestion, options: newOptions });
+    };
+
+    const insertAtCursor = (textToInsert: string) => {
+        const input = activeTextareaRef.current;
+        if (!input) return;
+
+        const start = input.selectionStart;
+        const end = input.selectionEnd;
+        const text = input.value;
+        const before = text.substring(0, start);
+        const after = text.substring(end, text.length);
+        
+        const newValue = before + textToInsert + after;
+        const newCursorPos = start + textToInsert.length;
+
+        // Determine which field we are editing based on name or id, simpler to just update state via onChange logic equivalent
+        // But since we need to update state, we need to know WHICH field is focused.
+        // A simple hack is to use the `name` attribute of the input.
+        const fieldName = input.name;
+        
+        if (fieldName === 'questionText') {
+            handleTempChange('text', newValue);
+        } else if (fieldName === 'answer') {
+            handleTempChange('answer', newValue);
+        } else if (fieldName.startsWith('option_')) {
+            const idx = parseInt(fieldName.split('_')[1]);
+            handleOptionChange(idx, newValue);
+        }
+
+        // Restore focus and cursor (requires timeout for React state update)
+        setTimeout(() => {
+            if(activeTextareaRef.current === input) {
+                input.focus();
+                input.setSelectionRange(newCursorPos, newCursorPos);
+            }
+        }, 0);
+    };
+
+    // Helper to clean option text (remove A., B., etc if present)
+    const cleanOptionText = (text: string) => {
+        if (!text) return '';
+        return text.replace(/^([A-D]|[a-d])[\.\)\s]+\s*/, '');
+    };
+
     // Helper function to format text for HTML/Word export
     const formatContentForExport = (text: string) => {
         if (!text) return '';
@@ -292,10 +384,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     htmlContent += `<div style="margin-bottom: 1em;"><p style="margin-bottom: 0.25em;"><b>Câu ${++questionCounter}: </b>${formatContentForExport(q.text)}</p>`;
                     if (Array.isArray(q.options) && q.options.length === 4) {
                         htmlContent += `<div style="padding-left: 1em;">
-                            <p style="margin-bottom: 0.25em;"><b>A. </b>${formatContentForExport(q.options[0])}</p>
-                            <p style="margin-bottom: 0.25em;"><b>B. </b>${formatContentForExport(q.options[1])}</p>
-                            <p style="margin-bottom: 0.25em;"><b>C. </b>${formatContentForExport(q.options[2])}</p>
-                            <p><b>D. </b>${formatContentForExport(q.options[3])}</p></div>`;
+                            <p style="margin-bottom: 0.25em;"><b>A. </b>${formatContentForExport(cleanOptionText(q.options[0]))}</p>
+                            <p style="margin-bottom: 0.25em;"><b>B. </b>${formatContentForExport(cleanOptionText(q.options[1]))}</p>
+                            <p style="margin-bottom: 0.25em;"><b>C. </b>${formatContentForExport(cleanOptionText(q.options[2]))}</p>
+                            <p><b>D. </b>${formatContentForExport(cleanOptionText(q.options[3]))}</p></div>`;
                     }
                     htmlContent += `</div>`;
                 });
@@ -360,8 +452,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                  for (let c = 0; c < columns; c++) {
                      const qIdx = r * columns + c;
                      if (qIdx < mcQuestions.length) {
-                         const ans = mcQuestions[qIdx].answer ? mcQuestions[qIdx].answer.trim().toUpperCase() : '';
-                         const letter = ans.match(/^[ABCD]/) ? ans.charAt(0) : ans;
+                         const rawAns = mcQuestions[qIdx].answer ? mcQuestions[qIdx].answer.trim() : '';
+                         // Strict extraction: Try to find a single letter [A-D] either at start or standalone
+                         const match = rawAns.match(/([A-D])(\.|\s|$)/i) || rawAns.match(/^([A-D])/i);
+                         const letter = match ? match[1].toUpperCase() : rawAns.charAt(0).toUpperCase().replace(/[^A-D]/g, '');
+                         
                          htmlContent += `<td style="border: 1px solid black; padding: 5px;">${letter}</td>`;
                      } else {
                          htmlContent += `<td style="border: 1px solid black; padding: 5px;"></td>`;
@@ -421,8 +516,11 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     };
 
     const renderMatrix = () => {
-        const SCORE_MC = 0.25;
-        const SCORE_SA = 0.25;
+        // Use configured point values
+        const SCORE_MC = examConfig.mcPointValue;
+        const SCORE_TF = examConfig.tfPointValue;
+        const SCORE_SA = examConfig.saPointValue;
+        
         const groupedTopics = topics.reduce((acc, t) => { (acc[t.chapter] = acc[t.chapter] || []).push(t); return acc; }, {} as {[key: string]: Topic[]});
         
         // Calculate totals for footer
@@ -432,8 +530,9 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         const totalEssayCount = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
         const essayScorePerItem = totalEssayCount > 0 ? examConfig.essayPoints / totalEssayCount : 0;
         const totalTfQuestions = totals.tf_knowledge + totals.tf_comprehension + totals.tf_application;
+        
+        // Score Calculation Logic
         const pointsForMcSa = (totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) * SCORE_MC + (totals.sa_knowledge + totals.sa_comprehension + totals.sa_application) * SCORE_SA;
-        const SCORE_TF = totalTfQuestions > 0 ? (examConfig.tnkqPoints - pointsForMcSa) / totalTfQuestions : 0;
         
         const formatPoints = (points: number) => Number.isInteger(points) ? points.toString() : points.toFixed(2).replace('.', ',');
         const renderCell = (c: number) => !c ? <td className="border border-slate-300 p-1"></td> : <td className="border border-slate-300 p-1 text-center font-medium">{c}</td>;
@@ -555,148 +654,137 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
 
     const renderSpecification = () => {
         if (!specification) return null;
-        let idx = 0;
+
+        // Group by chapter
+        const groupedSpec = specification.reduce((acc, t) => { 
+            (acc[t.chapter] = acc[t.chapter] || []).push(t); 
+            return acc; 
+        }, {} as Record<string, SpecTopic[]>);
+
+        // Define config values for footer calculation
+        const SCORE_MC = examConfig.mcPointValue;
+        const SCORE_TF = examConfig.tfPointValue;
+        const SCORE_SA = examConfig.saPointValue;
         
         // Calculate totals for footer
-        const totals = {
-             mc_knowledge: 0, mc_comprehension: 0, mc_application: 0,
-             tf_knowledge: 0, tf_comprehension: 0, tf_application: 0,
-             sa_knowledge: 0, sa_comprehension: 0, sa_application: 0,
-             essay_knowledge: 0, essay_comprehension: 0, essay_application: 0
-        };
+        const totals = questionKeys.reduce((acc, k) => ({ ...acc, [k]: 0 }), {} as TopicConfig);
+        specification.forEach(t => t.objectives.forEach(obj => questionKeys.forEach(k => { totals[k] += (obj.counts[k] || 0); })));
+        
+        const totalEssayCount = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
+        const essayScorePerItem = totalEssayCount > 0 ? examConfig.essayPoints / totalEssayCount : 0;
+        
+        const formatPoints = (points: number) => Number.isInteger(points) ? points.toString() : points.toFixed(2).replace('.', ',');
+        const renderCell = (c: number | undefined) => !c ? <td className="border border-slate-300 p-1"></td> : <td className="border border-slate-300 p-1 text-center font-medium">{c}</td>;
 
-        specification.forEach(topic => {
-            topic.objectives.forEach(obj => {
-                totals.mc_knowledge += obj.counts.mc_knowledge || 0;
-                totals.mc_comprehension += obj.counts.mc_comprehension || 0;
-                totals.mc_application += obj.counts.mc_application || 0;
-                
-                totals.tf_knowledge += obj.counts.tf_knowledge || 0;
-                totals.tf_comprehension += obj.counts.tf_comprehension || 0;
-                totals.tf_application += obj.counts.tf_application || 0;
-                
-                totals.sa_knowledge += obj.counts.sa_knowledge || 0;
-                totals.sa_comprehension += obj.counts.sa_comprehension || 0;
-                totals.sa_application += obj.counts.sa_application || 0;
-                
-                totals.essay_knowledge += obj.counts.essay_knowledge || 0;
-                totals.essay_comprehension += obj.counts.essay_comprehension || 0;
-                totals.essay_application += obj.counts.essay_application || 0;
-            });
-        });
-
-        // Helper to check if a cell has value to render or empty
-        const r = (val: number | undefined) => (val && val > 0) ? val : '';
+        let tt = 0;
 
         return (
             <div>
-                 <h2 className="text-xl font-bold text-center mb-4 uppercase text-slate-800">B. BẢN ĐẶC TẢ ĐỀ KIỂM TRA</h2>
-                 <div className="overflow-x-auto shadow-sm rounded-lg border border-slate-200">
-                    <table className="w-full border-collapse border border-slate-300 text-sm bg-white">
-                        <thead className="align-middle text-center font-bold bg-slate-50 text-slate-700">
+                <h2 className="text-xl font-bold text-center mb-1 uppercase">B. BẢN ĐẶC TẢ ĐỀ KIỂM TRA</h2>
+                <div className="overflow-x-auto">
+                    <table className="w-full border-collapse border border-slate-400 text-sm">
+                        <thead className="align-middle text-center font-bold bg-slate-50">
                             <tr>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[3%] min-w-[40px]">TT</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[12%] min-w-[120px]">Chủ đề/Chương</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[15%] min-w-[150px]">Nội dung/đơn vị kiến thức</th>
-                                <th rowSpan={4} className="border border-slate-300 p-2 w-[34%] min-w-[300px]">Yêu cầu cần đạt</th>
-                                <th colSpan={12} className="border border-slate-300 p-2">Số câu hỏi ở các mức độ đánh giá</th>
+                                <th rowSpan={4} className="border border-slate-300 p-1 w-[3%]">TT</th>
+                                <th rowSpan={4} className="border border-slate-300 p-1 w-[10%]">Chủ đề/Chương</th>
+                                <th rowSpan={4} className="border border-slate-300 p-1 w-[15%]">Nội dung/Đơn vị kiến thức</th>
+                                <th rowSpan={4} className="border border-slate-300 p-1 w-[20%]">Yêu cầu cần đạt</th>
+                                <th colSpan={12} className="border border-slate-300 p-1">Số câu hỏi ở các mức độ đánh giá</th>
                             </tr>
                             <tr>
                                 <th colSpan={9} className="border border-slate-300 p-1">TNKQ</th>
-                                <th colSpan={3} className="border border-slate-300 p-1">Tự luận</th>
+                                <th colSpan={3} rowSpan={2} className="border border-slate-300 p-1">Tự luận</th>
                             </tr>
                             <tr>
                                 <th colSpan={3} className="border border-slate-300 p-1">Nhiều lựa chọn</th>
                                 <th colSpan={3} className="border border-slate-300 p-1">“Đúng – Sai”</th>
                                 <th colSpan={3} className="border border-slate-300 p-1">Trả lời ngắn</th>
-                                <th className="border border-slate-300 p-1 w-[3%] min-w-[35px]" rowSpan={2}>Biết</th>
-                                <th className="border border-slate-300 p-1 w-[3%] min-w-[35px]" rowSpan={2}>Hiểu</th>
-                                <th className="border border-slate-300 p-1 w-[3%] min-w-[35px]" rowSpan={2}>Vận dụng</th>
                             </tr>
                             <tr>
-                                <th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Biết</th><th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Vận dụng</th>
-                                <th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Biết</th><th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Vận dụng</th>
-                                <th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Biết</th><th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%] min-w-[35px]">Vận dụng</th>
+                                <th className="border border-slate-300 p-1 w-[3%]">Biết</th><th className="border border-slate-300 p-1 w-[3%]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%]">Vận dụng</th>
+                                <th className="border border-slate-300 p-1 w-[3%]">Biết</th><th className="border border-slate-300 p-1 w-[3%]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%]">Vận dụng</th>
+                                <th className="border border-slate-300 p-1 w-[3%]">Biết</th><th className="border border-slate-300 p-1 w-[3%]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%]">Vận dụng</th>
+                                <th className="border border-slate-300 p-1 w-[3%]">Biết</th><th className="border border-slate-300 p-1 w-[3%]">Hiểu</th><th className="border border-slate-300 p-1 w-[3%]">Vận dụng</th>
                             </tr>
                         </thead>
-                         <tbody>
-                            {specification.map((topic) => (
-                                <React.Fragment key={topic.id}>
-                                    {topic.objectives.map((obj, oIdx) => {
-                                        const isFirstObj = oIdx === 0;
-                                        return (
-                                            <tr key={`${topic.id}-${oIdx}`} className="hover:bg-slate-50">
-                                                 {isFirstObj && <td rowSpan={topic.objectives.length} className="border border-slate-300 p-2 text-center align-middle font-semibold text-slate-600">{++idx}</td>}
-                                                 {isFirstObj && <td rowSpan={topic.objectives.length} className="border border-slate-300 p-2 font-semibold align-middle text-slate-800">{topic.chapter}</td>}
-                                                 {isFirstObj && <td rowSpan={topic.objectives.length} className="border border-slate-300 p-2 font-medium align-middle text-slate-800">{topic.name}</td>}
-                                                 
-                                                 <td className="border border-slate-300 p-2 text-left align-top text-slate-700">
-                                                     <MathRenderer content={obj.specificCompetency} />
-                                                 </td>
-                                                 
-                                                 {/* MC */}
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.mc_knowledge)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.mc_comprehension)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.mc_application)}</td>
-                                                 
-                                                 {/* TF */}
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.tf_knowledge)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.tf_comprehension)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.tf_application)}</td>
+                        <tbody>
+                            {Object.entries(groupedSpec).map(([chapter, topics]: [string, SpecTopic[]]) => {
+                                const chapterRowSpan = topics.reduce((sum, t) => sum + Math.max(t.objectives.length, 1), 0);
+                                tt++;
+                                let isFirstRowOfChapter = true;
 
-                                                 {/* SA */}
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.sa_knowledge)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.sa_comprehension)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.sa_application)}</td>
+                                return topics.map((topic, tIdx) => {
+                                    const objectives = topic.objectives && topic.objectives.length > 0 ? topic.objectives : [{ specificCompetency: '', counts: {} } as ObjectiveSpec];
+                                    const topicRowSpan = objectives.length;
 
-                                                 {/* Essay */}
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.essay_knowledge)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.essay_comprehension)}</td>
-                                                 <td className="border border-slate-300 p-2 text-center align-middle font-medium">{r(obj.counts.essay_application)}</td>
+                                    return objectives.map((obj, oIdx) => {
+                                        const row = (
+                                            <tr key={`${topic.id}-${oIdx}`}>
+                                                {isFirstRowOfChapter && <td rowSpan={chapterRowSpan} className="border border-slate-300 p-1 text-center align-middle font-semibold">{tt}</td>}
+                                                {isFirstRowOfChapter && <td rowSpan={chapterRowSpan} className="border border-slate-300 p-1 align-middle font-semibold">{chapter}</td>}
+                                                
+                                                {oIdx === 0 && <td rowSpan={topicRowSpan} className="border border-slate-300 p-1 align-middle">{topic.name}</td>}
+                                                
+                                                <td className="border border-slate-300 p-2 text-left align-top whitespace-pre-wrap">{obj.specificCompetency}</td>
+                                                
+                                                {renderCell(obj.counts.mc_knowledge)}
+                                                {renderCell(obj.counts.mc_comprehension)}
+                                                {renderCell(obj.counts.mc_application)}
+                                                
+                                                {renderCell(obj.counts.tf_knowledge)}
+                                                {renderCell(obj.counts.tf_comprehension)}
+                                                {renderCell(obj.counts.tf_application)}
+                                                
+                                                {renderCell(obj.counts.sa_knowledge)}
+                                                {renderCell(obj.counts.sa_comprehension)}
+                                                {renderCell(obj.counts.sa_application)}
+                                                
+                                                {renderCell(obj.counts.essay_knowledge)}
+                                                {renderCell(obj.counts.essay_comprehension)}
+                                                {renderCell(obj.counts.essay_application)}
                                             </tr>
-                                        )
-                                    })}
-                                </React.Fragment>
-                            ))}
-                            <tr className="bg-slate-100 font-bold text-slate-800">
-                                <td colSpan={4} className="border border-slate-300 p-2 text-center uppercase">Tổng cộng</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.mc_knowledge)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.mc_comprehension)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.mc_application)}</td>
-                                
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.tf_knowledge)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.tf_comprehension)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.tf_application)}</td>
-                                
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.sa_knowledge)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.sa_comprehension)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.sa_application)}</td>
-                                
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.essay_knowledge)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.essay_comprehension)}</td>
-                                <td className="border border-slate-300 p-2 text-center">{r(totals.essay_application)}</td>
+                                        );
+
+                                        if (isFirstRowOfChapter) isFirstRowOfChapter = false;
+                                        return row;
+                                    });
+                                });
+                            })}
+                            <tr className="font-bold bg-slate-50">
+                                <td colSpan={4} className="border border-slate-300 p-2 text-right">Tổng số câu</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.mc_knowledge || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.mc_comprehension || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.mc_application || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.tf_knowledge || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.tf_comprehension || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.tf_application || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.sa_knowledge || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.sa_comprehension || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.sa_application || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.essay_knowledge || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.essay_comprehension || ''}</td>
+                                <td className="border border-slate-300 p-1 text-center">{totals.essay_application || ''}</td>
                             </tr>
-                            <tr className="bg-slate-100 font-bold text-slate-800">
-                                <td colSpan={4} className="border border-slate-300 p-2 text-center uppercase">Tổng số điểm</td>
-                                {/* Manually calculate scores based on config logic - approximate */}
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{((totals.mc_knowledge+totals.mc_comprehension+totals.mc_application)*0.25).toLocaleString()}</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{((totals.tf_knowledge+totals.tf_comprehension+totals.tf_application)*1.0).toLocaleString()} (max)</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{((totals.sa_knowledge+totals.sa_comprehension+totals.sa_application)*0.25).toLocaleString()}</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{examConfig.essayPoints}</td>
+                            <tr className="font-bold bg-slate-50">
+                                <td colSpan={4} className="border border-slate-300 p-2 text-right">Tổng số điểm</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) * SCORE_MC)}</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.tf_knowledge + totals.tf_comprehension + totals.tf_application) * SCORE_TF)}</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.sa_knowledge + totals.sa_comprehension + totals.sa_application) * SCORE_SA)}</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.essay_knowledge + totals.essay_comprehension + totals.essay_application) * essayScorePerItem)}</td>
                             </tr>
-                             <tr className="bg-slate-100 font-bold text-slate-800">
-                                <td colSpan={4} className="border border-slate-300 p-2 text-center uppercase">Tỉ lệ %</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{(((totals.mc_knowledge+totals.mc_comprehension+totals.mc_application)*0.25/10)*100).toFixed(0)}%</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{(((totals.tf_knowledge+totals.tf_comprehension+totals.tf_application)*1.0/10)*100).toFixed(0)}% (max)</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{(((totals.sa_knowledge+totals.sa_comprehension+totals.sa_application)*0.25/10)*100).toFixed(0)}%</td>
-                                <td colSpan={3} className="border border-slate-300 p-2 text-center">{(examConfig.essayPoints/10*100).toFixed(0)}%</td>
+                             <tr className="font-bold bg-slate-50">
+                                <td colSpan={4} className="border border-slate-300 p-2 text-right">Tỉ lệ %</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) * SCORE_MC / 10) * 100)}</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.tf_knowledge + totals.tf_comprehension + totals.tf_application) * SCORE_TF / 10) * 100)}</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.sa_knowledge + totals.sa_comprehension + totals.sa_application) * SCORE_SA / 10) * 100)}</td>
+                                <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.essay_knowledge + totals.essay_comprehension + totals.essay_application) * essayScorePerItem / 10) * 100)}</td>
                             </tr>
-                         </tbody>
+                        </tbody>
                     </table>
-                 </div>
+                </div>
                  <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end gap-3 no-print">
-                    <button onClick={() => setActiveTab('matrix')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white shadow-sm hover:bg-slate-50">Quay lại</button>
-                    <button onClick={() => { setActiveTab('questions'); if(topics.some(t => t.generationStatus === 'pending')) handleGenerateQuestions(); }} className="px-6 py-2.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 shadow-sm">Tiếp tục: Tạo Đề thi</button>
+                    <button onClick={() => setActiveTab('matrix')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white">Quay lại</button>
+                    <button onClick={() => { setActiveTab('questions'); if (topics.some(t => t.generationStatus === 'pending')) handleGenerateQuestions(); }} className="px-6 py-2.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700">Tiếp tục: Tạo câu hỏi</button>
                 </div>
             </div>
         );
@@ -820,30 +908,125 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                                     </div>
                                                     <div className="pl-4 space-y-6">
                                                         {topic.questions.map((q, qIdx) => (
-                                                            <div key={q.id} className="bg-slate-50 p-4 rounded-md border border-slate-100">
-                                                                <div className="flex gap-2">
-                                                                    <span className="font-bold text-slate-700 whitespace-nowrap">Câu {qIdx + 1}:</span>
-                                                                    <div className="flex-grow">
-                                                                        <div className="text-slate-800 mb-2"><MathRenderer content={q.text} /></div>
-                                                                        {q.type === QuestionType.MULTIPLE_CHOICE && q.options && (
-                                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 ml-2">
-                                                                                {q.options.map((opt, oIdx) => (
-                                                                                    <div key={oIdx} className={`text-sm ${['A','B','C','D'][oIdx] === q.answer ? 'font-semibold text-green-700' : 'text-slate-600'}`}>
-                                                                                        <span className="font-bold mr-1">{['A','B','C','D'][oIdx]}.</span><MathRenderer content={opt} />
+                                                            <div key={q.id} className="group relative bg-slate-50 p-4 rounded-md border border-slate-100 hover:border-primary-300 transition-colors">
+                                                                {editingQuestionId === q.id && tempQuestion ? (
+                                                                    // --- EDIT MODE ---
+                                                                    <div className="bg-white p-4 rounded border border-primary-500 shadow-sm">
+                                                                        <div className="mb-2 flex justify-between items-center">
+                                                                            <span className="text-sm font-bold text-primary-700">Chỉnh sửa câu hỏi</span>
+                                                                            <span className="text-xs text-slate-500">Hỗ trợ LaTeX</span>
+                                                                        </div>
+                                                                        
+                                                                        {/* ToolBar */}
+                                                                        <MathKeyboard onInsert={insertAtCursor} />
+
+                                                                        <div className="mb-4">
+                                                                            <label className="block text-xs font-medium text-slate-500 mb-1">Nội dung câu hỏi</label>
+                                                                            <textarea
+                                                                                name="questionText"
+                                                                                ref={activeTextareaRef}
+                                                                                value={tempQuestion.text}
+                                                                                onChange={(e) => handleTempChange('text', e.target.value)}
+                                                                                className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+                                                                                rows={3}
+                                                                            />
+                                                                            <div className="mt-1 text-xs text-slate-400">Xem trước: <MathRenderer content={tempQuestion.text} /></div>
+                                                                        </div>
+
+                                                                        {/* Options for MC */}
+                                                                        {tempQuestion.type === QuestionType.MULTIPLE_CHOICE && tempQuestion.options && (
+                                                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+                                                                                {tempQuestion.options.map((opt, oIdx) => (
+                                                                                    <div key={oIdx}>
+                                                                                        <label className="block text-xs font-medium text-slate-500 mb-1">Lựa chọn {['A','B','C','D'][oIdx]}</label>
+                                                                                        <textarea // Changed to textarea for multi-line support
+                                                                                            name={`option_${oIdx}`}
+                                                                                            value={cleanOptionText(opt)}
+                                                                                            onFocus={(e) => activeTextareaRef.current = e.target}
+                                                                                            onChange={(e) => handleOptionChange(oIdx, e.target.value)}
+                                                                                            className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+                                                                                            rows={1}
+                                                                                        />
                                                                                     </div>
                                                                                 ))}
                                                                             </div>
                                                                         )}
-                                                                        {q.type === QuestionType.TRUE_FALSE && q.options && (
-                                                                            <div className="grid grid-cols-1 gap-2 ml-2 mt-2">
-                                                                                 {q.options.map((opt, oIdx) => <div key={oIdx} className="text-sm flex gap-2"><span className="font-bold">{['a','b','c','d'][oIdx]})</span><MathRenderer content={opt} /></div>)}
-                                                                                 <div className="mt-2 text-xs font-semibold text-green-700 bg-green-50 inline-block px-2 py-1 rounded">Đáp án: {q.answer}</div>
-                                                                            </div>
+
+                                                                        {/* Options for True/False */}
+                                                                        {tempQuestion.type === QuestionType.TRUE_FALSE && tempQuestion.options && (
+                                                                             <div className="space-y-2 mb-4">
+                                                                                {tempQuestion.options.map((opt, oIdx) => (
+                                                                                    <div key={oIdx} className="flex gap-2 items-start">
+                                                                                        <span className="mt-2 text-sm font-bold w-6">{['a','b','c','d'][oIdx]})</span>
+                                                                                        <div className="flex-grow">
+                                                                                            <textarea
+                                                                                                name={`option_${oIdx}`}
+                                                                                                value={opt}
+                                                                                                onFocus={(e) => activeTextareaRef.current = e.target}
+                                                                                                onChange={(e) => handleOptionChange(oIdx, e.target.value)}
+                                                                                                className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+                                                                                                rows={1}
+                                                                                            />
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))}
+                                                                             </div>
                                                                         )}
-                                                                        {(q.type === QuestionType.SHORT_ANSWER || q.type === QuestionType.ESSAY) && <div className="mt-3 text-sm bg-blue-50 p-3 rounded text-blue-800 border border-blue-100"><span className="font-bold underline mr-1">Đáp án:</span><MathRenderer content={q.answer} /></div>}
+
+                                                                        <div className="mb-4">
+                                                                            <label className="block text-xs font-medium text-slate-500 mb-1">Đáp án</label>
+                                                                            <input
+                                                                                name="answer"
+                                                                                value={tempQuestion.answer}
+                                                                                onFocus={(e) => activeTextareaRef.current = e.target}
+                                                                                onChange={(e) => handleTempChange('answer', e.target.value)}
+                                                                                className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+                                                                            />
+                                                                        </div>
+
+                                                                        <div className="flex justify-end gap-2">
+                                                                            <button onClick={cancelEditing} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50">Hủy</button>
+                                                                            <button onClick={saveEditing} className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded hover:bg-primary-700">Lưu thay đổi</button>
+                                                                        </div>
                                                                     </div>
-                                                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-800">{q.level === 'Biết' ? 'NB' : q.level === 'Hiểu' ? 'TH' : 'VD'}</span>
-                                                                </div>
+                                                                ) : (
+                                                                    // --- DISPLAY MODE ---
+                                                                    <>
+                                                                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                                                                            <button 
+                                                                                onClick={() => startEditing(q)}
+                                                                                className="p-1.5 bg-white text-primary-600 border border-primary-200 rounded shadow-sm hover:bg-primary-50"
+                                                                                title="Chỉnh sửa câu hỏi"
+                                                                            >
+                                                                                <PencilIcon className="w-4 h-4" />
+                                                                            </button>
+                                                                        </div>
+
+                                                                        <div className="flex gap-2">
+                                                                            <span className="font-bold text-slate-700 whitespace-nowrap">Câu {qIdx + 1}:</span>
+                                                                            <div className="flex-grow">
+                                                                                <div className="text-slate-800 mb-2"><MathRenderer content={q.text} /></div>
+                                                                                {q.type === QuestionType.MULTIPLE_CHOICE && q.options && (
+                                                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 ml-2">
+                                                                                        {q.options.map((opt, oIdx) => (
+                                                                                            <div key={oIdx} className={`text-sm ${['A','B','C','D'][oIdx] === q.answer ? 'font-semibold text-green-700' : 'text-slate-600'}`}>
+                                                                                                <span className="font-bold mr-1">{['A','B','C','D'][oIdx]}.</span><MathRenderer content={cleanOptionText(opt)} />
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                                {q.type === QuestionType.TRUE_FALSE && q.options && (
+                                                                                    <div className="grid grid-cols-1 gap-2 ml-2 mt-2">
+                                                                                        {q.options.map((opt, oIdx) => <div key={oIdx} className="text-sm flex gap-2"><span className="font-bold">{['a','b','c','d'][oIdx]})</span><MathRenderer content={opt} /></div>)}
+                                                                                        <div className="mt-2 text-xs font-semibold text-green-700 bg-green-50 inline-block px-2 py-1 rounded">Đáp án: {q.answer}</div>
+                                                                                    </div>
+                                                                                )}
+                                                                                {(q.type === QuestionType.SHORT_ANSWER || q.type === QuestionType.ESSAY) && <div className="mt-3 text-sm bg-blue-50 p-3 rounded text-blue-800 border border-blue-100"><span className="font-bold underline mr-1">Đáp án:</span><MathRenderer content={q.answer} /></div>}
+                                                                            </div>
+                                                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-200 text-slate-800 h-fit">{q.level === 'Biết' ? 'NB' : q.level === 'Hiểu' ? 'TH' : 'VD'}</span>
+                                                                        </div>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         ))}
                                                     </div>

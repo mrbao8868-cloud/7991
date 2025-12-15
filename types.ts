@@ -143,15 +143,24 @@ export interface ExamConfig {
     examCode?: string;
     examTime: string;
     duration: string;
+    
+    // Dynamic Point Configuration
+    mcPointValue: number;
+    tfPointValue: number;
+    saPointValue: number;
+    
     tnkqPoints: number;
     essayPoints: number;
+    
     mcCount: number;
     tfCount: number;
     saCount: number;
     essayCount: number;
+    
     knowledgePct: number;
     comprehensionPct: number;
     applicationPct: number;
+    
     isMultiSubject: boolean;
     subjectAllocations?: { subjectName: string; percentage: number }[];
     difficulty: ExamDifficulty;

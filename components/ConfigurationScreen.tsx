@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { ExamConfig, InitialAnalysisResult, ExamDifficulty } from '../types';
 import { BalDigitechLogo, ExclamationTriangleIcon } from './icons';
@@ -12,12 +13,19 @@ const defaultInitialConfig: Omit<ExamConfig, 'schoolName' | 'departmentName' | '
     schoolYear: `NĂM HỌC ${new Date().getFullYear()} - ${new Date().getFullYear() + 1}`,
     examCode: '301',
     duration: '45 phút',
-    tnkqPoints: 6, // Will be recalculated
-    essayPoints: 4, // Will be recalculated
+    
+    mcPointValue: 0.25,
+    tfPointValue: 1.0,
+    saPointValue: 0.25,
+
+    tnkqPoints: 6, // Calculated
+    essayPoints: 4, // Calculated
+    
     mcCount: 12,
     tfCount: 2,
     saCount: 4,
     essayCount: 1,
+    
     knowledgePct: 40,
     comprehensionPct: 30,
     applicationPct: 30,
@@ -52,7 +60,7 @@ const LabeledInput: React.FC<LabeledInputProps> = ({ label, name, className, ...
             id={name}
             name={name}
             {...props}
-            className={`mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm ${props.readOnly ? 'bg-slate-100 text-slate-500' : 'bg-white'} ${className || ''}`}
+            className={`mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm ${props.readOnly ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-white'} ${className || ''}`}
         />
     </div>
 );
@@ -82,29 +90,26 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
 
     const isMultiSubject = analysisResult.subjects.length > 1;
 
-    // Effect to auto-calculate points based on counts (Default logic)
-    // If the user manually changes points, this effect will only run again if they change the counts.
+    // Effect to auto-calculate points based on counts AND point values
     useEffect(() => {
-        const mc = parseFloat(formValues.mcCount) || 0;
-        const tf = parseFloat(formValues.tfCount) || 0;
-        const sa = parseFloat(formValues.saCount) || 0;
+        const mcCount = parseFloat(formValues.mcCount) || 0;
+        const tfCount = parseFloat(formValues.tfCount) || 0;
+        const saCount = parseFloat(formValues.saCount) || 0;
+        
+        const mcPoint = parseFloat(formValues.mcPointValue) || 0;
+        const tfPoint = parseFloat(formValues.tfPointValue) || 0;
+        const saPoint = parseFloat(formValues.saPointValue) || 0;
 
-        // Default Rule:
-        // MC: 0.25 points
-        // SA: 0.25 points
-        // TF: 1.0 points (Standard assumption, but user can override)
+        let tnkqRaw = (mcCount * mcPoint) + (tfCount * tfPoint) + (saCount * saPoint);
         
-        let tnkqRaw = (mc * 0.25) + (tf * 1.0) + (sa * 0.25);
-        
-        // Fix floating point precision issues (e.g., 3.99999999)
+        // Fix floating point precision issues
         const tnkq = Math.round(tnkqRaw * 1000) / 1000;
         
         let essayRaw = 10 - tnkq;
-        // Ensure essay isn't negative and round cleanly
         const essay = Math.max(0, Math.round(essayRaw * 1000) / 1000);
 
-        if (essay <= 0 && tnkq > 10) {
-            setPointError(`Tổng điểm TNKQ (${tnkq}) vượt quá 10 điểm! Vui lòng giảm số lượng câu hỏi hoặc chỉnh sửa điểm thủ công.`);
+        if (tnkq > 10) {
+            setPointError(`Tổng điểm TNKQ (${tnkq}) vượt quá 10 điểm!`);
         } else {
             setPointError(null);
         }
@@ -114,7 +119,10 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
             tnkqPoints: tnkq.toString(),
             essayPoints: essay.toString()
         }));
-    }, [formValues.mcCount, formValues.tfCount, formValues.saCount]);
+    }, [
+        formValues.mcCount, formValues.tfCount, formValues.saCount,
+        formValues.mcPointValue, formValues.tfPointValue, formValues.saPointValue
+    ]);
 
      useEffect(() => {
         if (!isMultiSubject) {
@@ -132,41 +140,6 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
         setFormValues(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handlePointChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const { name, value } = e.target;
-        // Allow typing (string), parse for logic to update the pair
-        const val = parseFloat(value) || 0;
-        
-        if (name === 'tnkqPoints') {
-            const essay = Math.max(0, 10 - val);
-            // Round to 3 decimals to avoid floating point weirdness during edit
-            const essayRounded = Math.round(essay * 1000) / 1000;
-            setFormValues(prev => ({
-                ...prev,
-                tnkqPoints: value,
-                essayPoints: essayRounded.toString()
-            }));
-            if (val > 10) {
-                setPointError(`Tổng điểm TNKQ không được vượt quá 10.`);
-            } else {
-                setPointError(null);
-            }
-        } else if (name === 'essayPoints') {
-             const tnkq = Math.max(0, 10 - val);
-             const tnkqRounded = Math.round(tnkq * 1000) / 1000;
-             setFormValues(prev => ({
-                ...prev,
-                essayPoints: value,
-                tnkqPoints: tnkqRounded.toString()
-            }));
-             if (val > 10) {
-                setPointError(`Tổng điểm Tự luận không được vượt quá 10.`);
-            } else {
-                setPointError(null);
-            }
-        }
     };
 
     const handleAllocationChange = (index: number, value: string) => {
@@ -189,16 +162,23 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
             duration: formValues.duration,
             isMultiSubject: isMultiSubject,
             subjectAllocations: isMultiSubject ? allocations.map(a => ({...a, percentage: Number(a.percentage) || 0})) : undefined,
-            // Use parseFloat to preserve decimals
+            
+            mcPointValue: parseFloat(formValues.mcPointValue) || 0,
+            tfPointValue: parseFloat(formValues.tfPointValue) || 0,
+            saPointValue: parseFloat(formValues.saPointValue) || 0,
+
             tnkqPoints: parseFloat(formValues.tnkqPoints) || 0,
             essayPoints: parseFloat(formValues.essayPoints) || 0,
+            
             mcCount: parseInt(formValues.mcCount, 10) || 0,
             tfCount: parseInt(formValues.tfCount, 10) || 0,
             saCount: parseInt(formValues.saCount, 10) || 0,
             essayCount: parseInt(formValues.essayCount, 10) || 0,
+            
             knowledgePct: parseInt(formValues.knowledgePct, 10) || 0,
             comprehensionPct: parseInt(formValues.comprehensionPct, 10) || 0,
             applicationPct: parseInt(formValues.applicationPct, 10) || 0,
+            
             difficulty: formValues.difficulty as ExamDifficulty,
         };
         onConfigSubmit(finalConfig);
@@ -284,15 +264,43 @@ const ConfigurationScreen: React.FC<ConfigurationScreenProps> = ({ analysisResul
                                         ))}
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4">
-                                    <LabeledInput label="Nhiều lựa chọn (0.25đ)" name="mcCount" type="number" value={formValues.mcCount} onChange={handleChange} />
-                                    <LabeledInput label="Đúng/Sai (Mặc định 1.0đ)" name="tfCount" type="number" value={formValues.tfCount} onChange={handleChange} />
-                                    <LabeledInput label="Trả lời ngắn (0.25đ)" name="saCount" type="number" value={formValues.saCount} onChange={handleChange} />
-                                    <LabeledInput label="Tự luận" name="essayCount" type="number" value={formValues.essayCount} onChange={handleChange} />
+                                <div className="mt-4 grid grid-cols-2 gap-4 border-t border-slate-200 pt-4">
+                                    <div className="col-span-2 grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700">Trắc nghiệm nhiều lựa chọn</label>
+                                            <div className="grid grid-cols-2 gap-2 mt-1">
+                                                <input placeholder="Số câu" name="mcCount" type="number" value={formValues.mcCount} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                                <input placeholder="Điểm/câu" name="mcPointValue" type="number" step="0.05" value={formValues.mcPointValue} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700">Trắc nghiệm Đúng/Sai</label>
+                                            <div className="grid grid-cols-2 gap-2 mt-1">
+                                                <input placeholder="Số câu" name="tfCount" type="number" value={formValues.tfCount} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                                <input placeholder="Điểm/câu" name="tfPointValue" type="number" step="0.05" value={formValues.tfPointValue} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="col-span-2 grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700">Trả lời ngắn</label>
+                                            <div className="grid grid-cols-2 gap-2 mt-1">
+                                                <input placeholder="Số câu" name="saCount" type="number" value={formValues.saCount} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                                <input placeholder="Điểm/câu" name="saPointValue" type="number" step="0.05" value={formValues.saPointValue} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-700">Tự luận</label>
+                                            <div className="mt-1">
+                                                <input placeholder="Số câu" name="essayCount" type="number" value={formValues.essayCount} onChange={handleChange} className="block w-full px-2 py-1 border border-slate-300 rounded text-sm"/>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
+
                                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 mt-4 bg-slate-100 p-3 rounded-md">
-                                     <LabeledInput label="Điểm TNKQ (Sửa được)" name="tnkqPoints" type="text" value={formValues.tnkqPoints} onChange={handlePointChange} />
-                                     <LabeledInput label="Điểm Tự luận (Sửa được)" name="essayPoints" type="text" value={formValues.essayPoints} onChange={handlePointChange} />
+                                     <LabeledInput label="Tổng điểm TNKQ (Tự tính)" name="tnkqPoints" type="text" value={formValues.tnkqPoints} readOnly />
+                                     <LabeledInput label="Điểm Tự luận (10 - TNKQ)" name="essayPoints" type="text" value={formValues.essayPoints} readOnly />
                                 </div>
                                 {pointError && (
                                     <div className="flex items-start text-xs text-red-700 bg-red-50 p-2 rounded-md mt-2">

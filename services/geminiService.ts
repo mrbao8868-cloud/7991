@@ -288,9 +288,18 @@ export const generateMatrixFromImages = async (keys: string[], onRotate: any, im
         Create an exam matrix.
         ${scopeInstruction}
         Constraints:
-        - MC: ${config.mcCount}, TF: ${config.tfCount}, SA: ${config.saCount}, Essay: ${config.essayCount}
+        - Multiple Choice (MC): ${config.mcCount} questions
+        - True/False (TF): ${config.tfCount} questions
+        - Short Answer (SA): ${config.saCount} questions
+        - Essay: ${config.essayCount} questions
         - Difficulty: ${config.difficulty}
-        - Distribute questions per topic and cognitive level.
+        
+        CRITICAL DISTRIBUTION RULES:
+        - You MUST distribute the questions across topics to match these Cognitive Level percentages as closely as possible:
+          * Knowledge (Biết): ${config.knowledgePct}% of total questions
+          * Comprehension (Hiểu): ${config.comprehensionPct}% of total questions
+          * Application (Vận dụng): ${config.applicationPct}% of total questions
+        
         Return JSON matching schema.
     `;
     
@@ -364,6 +373,16 @@ const generateQuestionsForObjective = async (keys: string[], onRotate: any, chap
         - You MUST generate exactly 4 sub-statements labeled a, b, c, d for every True/False question.
         - Put these 4 statements in the "options" array.
         - The "answer" field MUST strictly list the result for each sub-statement (e.g., "a) Đúng, b) Sai, c) Sai, d) Đúng").
+
+        CRITICAL for "Trắc nghiệm nhiều lựa chọn" (Multiple Choice):
+        - The "answer" field MUST BE JUST THE LETTER (A, B, C, or D).
+        - The "options" array MUST contain ONLY the content of the answer. DO NOT include prefixes like "A.", "B.", "C.", "D." or "1.", "2.".
+        - Example: options: ["7 chu kì", "8 chu kì", ...] NOT ["A. 7 chu kì", "B. 8 chu kì", ...]
+
+        CRITICAL for "Trả lời ngắn" (Short Answer):
+        - The "answer" field MUST BE THE FINAL RESULT ONLY (e.g., "5", "-10", "4a^2", "15 cm").
+        - DO NOT write full sentences like "Kết quả là...", "Đáp số:". Just the value.
+        - Phrase the question so it explicitly asks for a specific value (e.g., "Tính giá trị của...", "Kết quả phép tính là...").
 
         Return JSON array.
     `;
