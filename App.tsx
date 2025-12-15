@@ -36,14 +36,12 @@ function App() {
     // Announcement State
     const [announcement, setAnnouncement] = useState<string | null>(null);
 
-    // Load API keys and Auth status from localStorage on initial render
+    // Load API keys from localStorage on initial render
+    // REMOVED: Auth loading logic to ensure password is always asked
     useEffect(() => {
         try {
-            // Check Auth
-            const storedAuth = localStorage.getItem('isAuthenticated');
-            if (storedAuth === 'true') {
-                setIsAuthenticated(true);
-            }
+            // NOTE: We do NOT check 'isAuthenticated' from localStorage anymore
+            // to enforce login on every session/refresh.
 
             const storedKeys = localStorage.getItem('apiKeys');
             const storedActiveKey = localStorage.getItem('activeApiKey');
@@ -127,11 +125,13 @@ function App() {
     
     const handleLoginSuccess = () => {
         setIsAuthenticated(true);
-        localStorage.setItem('isAuthenticated', 'true');
+        // REMOVED: localStorage.setItem('isAuthenticated', 'true'); 
+        // We do not save auth state to ensure user logs in every time.
     };
 
     const handleLogout = () => {
         setIsAuthenticated(false);
+        // Cleanup just in case
         localStorage.removeItem('isAuthenticated');
         resetState();
     };
