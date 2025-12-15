@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { KeyIcon, ExclamationTriangleIcon, TrashIcon } from './icons';
 
@@ -47,7 +48,8 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
         return `${key.substring(0, 8)}...${key.substring(key.length - 4)}`;
     };
 
-    const remainingKeys = Math.max(0, 2 - keys.length);
+    const isMinimumSatisfied = keys.length >= 1;
+    const remainingRecommended = Math.max(0, 2 - keys.length);
 
     return (
         <div 
@@ -72,10 +74,10 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                             </h3>
                             <div className="mt-1 text-sm text-slate-500">
                                 <p>Thêm và chọn Khóa API của Google AI Studio.</p>
-                                <p className="text-red-600 font-bold mt-1">
-                                    {remainingKeys > 0 
-                                        ? `Bắt buộc thêm ${remainingKeys} khóa nữa để bắt đầu (Tối thiểu 2).`
-                                        : 'Đã đủ số lượng khóa yêu cầu.'}
+                                <p className={`font-bold mt-1 ${isMinimumSatisfied ? 'text-green-600' : 'text-red-600'}`}>
+                                    {isMinimumSatisfied 
+                                        ? (remainingRecommended > 0 ? `Khuyên dùng thêm ${remainingRecommended} khóa để tối ưu tốc độ.` : 'Đã đủ số lượng khóa khuyên dùng.')
+                                        : 'Bắt buộc thêm ít nhất 1 khóa để bắt đầu.'}
                                 </p>
                             </div>
                         </div>
@@ -119,8 +121,8 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                     <div className="mt-6">
                         <div className="flex justify-between items-end mb-2">
                             <h4 className="font-semibold text-slate-700">Các khóa đã lưu</h4>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${keys.length >= 2 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                {keys.length}/2 Khóa ({remainingKeys > 0 ? `Thiếu ${remainingKeys}` : 'Đủ'})
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${keys.length >= 1 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                {keys.length} Khóa ({keys.length >= 1 ? 'Đủ điều kiện' : 'Chưa đủ'})
                             </span>
                         </div>
                         <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
@@ -166,7 +168,7 @@ const ApiKeyManagerModal: React.FC<ApiKeyManagerModalProps> = ({
                         disabled={!isClosable}
                         className="px-4 py-2 bg-white text-sm font-medium text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 rounded-md disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
                     >
-                        {isClosable ? 'Đóng & Bắt đầu' : `Thêm ${remainingKeys} khóa nữa để tiếp tục`}
+                        {isClosable ? 'Đóng & Bắt đầu' : 'Cần thêm khóa để tiếp tục'}
                     </button>
                 </div>
             </div>

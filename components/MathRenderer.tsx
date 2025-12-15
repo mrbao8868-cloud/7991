@@ -1,95 +1,39 @@
 
-import React, { useRef, useEffect } from 'react';
-
-// Declare KaTeX's auto-render function and our custom flag on the global window object for TypeScript.
-declare global {
-    interface Window {
-        renderMathInElement: (element: HTMLElement, options: any) => void;
-        KATE_IS_READY?: boolean;
-    }
-}
+import React from 'react';
 
 const MathRenderer: React.FC<{ content: string, className?: string }> = ({ content, className }) => {
-    const containerRef = useRef<HTMLSpanElement>(null);
+    if (!content) return null;
 
-    // Pre-process content to fix common AI formatting errors
-    const formatContent = (raw: string) => {
-        if (!raw) return '';
-        let processed = raw;
+    // Helper to process text: 
+    // 1. Converts x^2 to x<sup>2</sup> and H_2 to H<sub>2</sub>
+    // 2. Converts * to × (multiplication sign)
+    const processMathText = (text: string) => {
+        let processed = text;
+        
+        // Handle Multiplication: * -> × (using spaces for readability)
+        // Using unicode times symbol which looks like 'x' but is semantically correct for math
+        processed = processed.replace(/\*/g, ' × ');
 
-        // 1. Fix broken delimiters often output by AI (e.g., "\ [" instead of "\[")
-        processed = processed.replace(/\\\s+\[/g, '\\['); // Fix \ [ -> \[
-        processed = processed.replace(/\\\s+\]/g, '\\]'); // Fix \ ] -> \]
-        processed = processed.replace(/\\\s+\(/g, '\\('); // Fix \ ( -> \(
-        processed = processed.replace(/\\\s+\)/g, '\\)'); // Fix \ ) -> \)
+        // 1. Handle Superscripts (Exponents)
+        // Pattern: ^ followed by {content} OR simple alphanumeric chars
+        // e.g., "x^2" -> "x<sup>2</sup>", "a^{n+1}" -> "a<sup>n+1</sup>"
+        processed = processed.replace(/\^\{([^}]+)\}/g, '<sup>$1</sup>');
+        processed = processed.replace(/\^([a-zA-Z0-9+\-(),.]+)/g, '<sup>$1</sup>');
 
-        // 2. Wrap standalone \ce{...} commands in \( ... \) so KaTeX can render them.
-        // This regex matches \ce{...} allowing for whitespace like \ce { H2O } and simple nested braces.
-        // We attempt to avoid double-wrapping if it's already wrapped.
-        processed = processed.replace(/(\\ce\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})/g, (match, p1, offset, string) => {
-             // Simple check to see if it's likely already inside a delimiter
-             const preceding = string.slice(Math.max(0, offset - 5), offset);
-             if (preceding.match(/\\\($/) || preceding.match(/\\\[$/) || preceding.match(/\$\$$/)) {
-                 return match;
-             }
-             return `\\(${match}\\)`;
-        });
-
-        // 3. Clean up any accidental double wrappers like \( \( \ce{...} \) \)
-        processed = processed.replace(/\\\(\s*\\\(\s*\\ce/g, '\\(\\ce');
-        processed = processed.replace(/\\\}\s*\\\)\s*\\\)/g, '\\}\\)');
+        // 2. Handle Subscripts (Indices/Chemistry)
+        // Pattern: _ followed by {content} OR simple alphanumeric chars
+        // e.g., "H_2O" -> "H<sub>2</sub>O", "a_{ij}" -> "a<sub>ij</sub>"
+        processed = processed.replace(/_\{([^}]+)\}/g, '<sub>$1</sub>');
+        processed = processed.replace(/_([a-zA-Z0-9+\-(),.]+)/g, '<sub>$1</sub>');
 
         return processed;
     };
 
-    const formattedContent = formatContent(content);
-
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return;
-
-        // Set the text content directly.
-        // CSS 'white-space: pre-wrap' handles the newlines ('\n') automatically.
-        container.innerText = formattedContent || '';
-
-        const render = () => {
-            if (container && typeof window.renderMathInElement === 'function') {
-                try {
-                    // Call the KaTeX function to render math in the container.
-                    window.renderMathInElement(container, {
-                        delimiters: [
-                            { left: '$$', right: '$$', display: true },
-                            { left: '\\[', right: '\\]', display: true },
-                            { left: '\\(', right: '\\)', display: false },
-                            { left: '$', right: '$', display: false }
-                        ],
-                        throwOnError: false,
-                        // Allow mhchem to work
-                        trust: true,
-                        strict: false
-                    });
-                } catch (e) {
-                    console.error("MathRenderer: Error during KaTeX rendering:", e);
-                }
-            }
-        };
-
-        if (window.KATE_IS_READY) {
-            render();
-            return;
-        }
-
-        document.addEventListener('katex-ready', render, { once: true });
-        return () => {
-            document.removeEventListener('katex-ready', render);
-        };
-    }, [formattedContent]); 
-
     return (
         <span 
-            ref={containerRef} 
             className={className}
             style={{ whiteSpace: 'pre-wrap', display: 'inline-block' }} 
+            dangerouslySetInnerHTML={{ __html: processMathText(content) }}
         />
     );
 };

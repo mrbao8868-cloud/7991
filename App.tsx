@@ -8,7 +8,6 @@ import ApiKeyPromptScreen from './components/ApiKeyPromptScreen';
 import ExamWorkspace from './components/ExamWorkspace';
 import UploadScreen from './components/UploadScreen';
 import LoginScreen from './components/LoginScreen';
-import Chatbot from './components/Chatbot';
 
 type AppStage = 'upload' | 'configure' | 'workspace';
 
@@ -51,7 +50,8 @@ function App() {
             const keys = storedKeys ? JSON.parse(storedKeys) : [];
             setApiKeys(keys);
             
-            const hasEnoughKeys = keys.length >= 2;
+            // Allow starting with just 1 key if needed
+            const hasEnoughKeys = keys.length >= 1;
 
             if (storedActiveKey && keys.includes(storedActiveKey)) {
                 setActiveApiKey(storedActiveKey);
@@ -74,8 +74,7 @@ function App() {
     // Effect to manage the main status message based on app state
     useEffect(() => {
         if (!isAppReady) {
-            const remaining = Math.max(0, 2 - apiKeys.length);
-            setStatusMessage(`Vui lòng thêm ${remaining} API Key nữa để bắt đầu (Yêu cầu tối thiểu 2).`);
+            setStatusMessage(`Vui lòng thêm API Key để bắt đầu.`);
         } else {
             switch(appStage) {
                 case 'upload':
@@ -85,7 +84,6 @@ function App() {
                     setStatusMessage('AI đã phân tích tài liệu. Vui lòng kiểm tra và xác nhận cấu hình ma trận.');
                     break;
                 case 'workspace':
-                    // Workspace component will provide more specific updates
                     setStatusMessage('Đang tạo ma trận từ tài liệu và cấu hình...');
                     break;
             }
@@ -101,10 +99,8 @@ function App() {
                     const csvText = await response.text();
                     const rows = csvText.split(/\r?\n/);
                     if (rows.length > 1) {
-                        // Get row 2 (index 1)
                         const row = rows[1];
                         let message = "";
-                        // Handle basic CSV quoting
                         if (row.startsWith('"')) {
                             const match = row.match(/^"((?:[^"]|"")*)"/);
                             if (match) {
@@ -137,7 +133,6 @@ function App() {
     const handleLogout = () => {
         setIsAuthenticated(false);
         localStorage.removeItem('isAuthenticated');
-        // Optional: Reset other states if needed
         resetState();
     };
 
@@ -153,7 +148,7 @@ function App() {
                 setApiKeyError(null);
             }
 
-            if (newKeys.length >= 2) {
+            if (newKeys.length >= 1) {
                 setIsAppReady(true);
             }
         }
@@ -164,7 +159,7 @@ function App() {
         setApiKeys(newKeys);
         localStorage.setItem('apiKeys', JSON.stringify(newKeys));
         
-        if (newKeys.length < 2) {
+        if (newKeys.length < 1) {
             setIsAppReady(false);
         }
 
@@ -175,7 +170,6 @@ function App() {
                 localStorage.setItem('activeApiKey', newActiveKey);
             } else {
                 localStorage.removeItem('activeApiKey');
-                // isAppReady handled by length check above
             }
         }
     };
@@ -186,7 +180,7 @@ function App() {
         setApiKeyError(null);
         if(closeModal) setIsApiModalOpen(false);
         
-        if (apiKeys.length >= 2) {
+        if (apiKeys.length >= 1) {
             setIsAppReady(true);
         }
     };
@@ -239,7 +233,6 @@ function App() {
                 );
             case 'configure':
                 if (!analysisResult) {
-                    // Should not happen, but as a fallback
                     resetState();
                     return null;
                 }
@@ -252,7 +245,6 @@ function App() {
                 );
             case 'workspace':
                 if (!examConfig || documentImages.length === 0) {
-                     // Should not happen, but as a fallback
                     resetState();
                     return null;
                 }
@@ -273,7 +265,6 @@ function App() {
         }
     };
 
-    // If not authenticated, show Login Screen
     if (!isAuthenticated) {
         return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
     }
@@ -282,29 +273,24 @@ function App() {
         <div className="bg-slate-100 min-h-screen flex flex-col relative">
             <ApiKeyManagerModal
                 isOpen={isApiModalOpen || !isAppReady}
-                onClose={() => { if (apiKeys.length >= 2) setIsApiModalOpen(false) }}
+                onClose={() => { if (apiKeys.length >= 1) setIsApiModalOpen(false) }}
                 keys={apiKeys}
                 activeKey={activeApiKey}
                 onAddKey={handleAddApiKey}
                 onDeleteKey={handleDeleteApiKey}
                 onSetActiveKey={handleSetActiveApiKey}
                 errorMessage={apiKeyError}
-                isClosable={apiKeys.length >= 2}
+                isClosable={apiKeys.length >= 1}
             />
-            
-            <Chatbot activeApiKey={activeApiKey} />
 
             <header className="no-print shadow-md bg-white">
-                {/* Top bar with Logo, Title, and Banner Info */}
                 <div className="bg-slate-800 text-white">
                     <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
-                        {/* Left side: Logo and Title */}
                         <div className="flex items-center gap-3 py-3">
                             <BalDigitechLogo className="h-8 w-8 text-white" />
                             <h1 className="text-lg font-semibold">Ứng dụng tạo đề thi theo công văn 7991</h1>
                         </div>
 
-                        {/* Right side: Banner Info */}
                         <div className="hidden lg:block text-right">
                             <h2 className="text-base font-bold tracking-wide text-white">Trung tâm Tin học ứng dụng Bal Digitech</h2>
                             <div className="text-xs mt-1 flex justify-end items-center gap-x-4 text-slate-300">
@@ -316,7 +302,6 @@ function App() {
                     </div>
                 </div>
 
-                {/* Announcement Bar */}
                 {announcement && (
                     <div className="bg-yellow-100 text-yellow-900 border-b border-yellow-200 h-8 flex items-center overflow-hidden relative">
                          <div className="animate-marquee whitespace-nowrap">
@@ -326,7 +311,6 @@ function App() {
                     </div>
                 )}
 
-                {/* Status bar */}
                 <div className="bg-primary-700 text-primary-50">
                     <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 h-10 flex items-center">
                         <SparkleIcon className="w-5 h-5 mr-2 flex-shrink-0"/>
