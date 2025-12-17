@@ -139,6 +139,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     const [tempQuestion, setTempQuestion] = useState<Question | null>(null);
     const activeTextareaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
+    // Refs for Excel Export
+    const matrixTableRef = useRef<HTMLTableElement>(null);
+    const specTableRef = useRef<HTMLTableElement>(null);
+
     const allQuestions = topics.flatMap(t => t.questions || []);
     const exportStepName = '5. Xem & Tải về';
 
@@ -334,6 +338,43 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         // Handle newlines
         processed = processed.replace(/\n/g, '<br/>');
         return processed;
+    };
+
+    const handleExportExcel = (ref: React.RefObject<HTMLTableElement>, fileName: string) => {
+        if (!ref.current) return;
+
+        // Clone the table to avoid modifying the DOM
+        const tableHtml = ref.current.outerHTML;
+
+        // Wrap in a complete HTML document for Excel to interpret it correctly
+        const html = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    table { border-collapse: collapse; width: 100%; }
+                    td, th { border: 1px solid #000000; padding: 5px; text-align: center; vertical-align: middle; }
+                    .text-left { text-align: left; }
+                    .font-bold { font-weight: bold; }
+                </style>
+            </head>
+            <body>${tableHtml}</body>
+            </html>
+        `;
+
+        const blob = new Blob(['\ufeff', html], {
+            type: 'application/vnd.ms-excel'
+        });
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${fileName}.xls`;
+        document.body.appendChild(link);
+        link.click();
+        
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     const generateExamHtmlContent = () => {
@@ -542,7 +583,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             <div>
                 <h2 className="text-xl font-bold text-center mb-1 uppercase">A. MA TRẬN ĐỀ KIỂM TRA</h2>
                 <div className="overflow-x-auto">
-                    <table className="w-full border-collapse border border-slate-400 text-sm">
+                    <table ref={matrixTableRef} className="w-full border-collapse border border-slate-400 text-sm">
                         <thead className="align-middle text-center font-bold bg-slate-50">
                              <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-1 w-[3%]">TT</th>
@@ -645,6 +686,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     </table>
                 </div>
                 <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end gap-3 no-print">
+                     <button onClick={() => handleExportExcel(matrixTableRef, 'Ma_tran_de_thi')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 inline-flex items-center">
+                        <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
+                        Tải Excel
+                    </button>
                     <button onClick={onBack} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white">Quay lại</button>
                     <button onClick={() => { setActiveTab('spec'); if (!specification) handleGenerateSpec(); }} className="px-6 py-2.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700">Tiếp tục: Bản đặc tả</button>
                 </div>
@@ -682,7 +727,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             <div>
                 <h2 className="text-xl font-bold text-center mb-1 uppercase">B. BẢN ĐẶC TẢ ĐỀ KIỂM TRA</h2>
                 <div className="overflow-x-auto">
-                    <table className="w-full border-collapse border border-slate-400 text-sm">
+                    <table ref={specTableRef} className="w-full border-collapse border border-slate-400 text-sm">
                         <thead className="align-middle text-center font-bold bg-slate-50">
                             <tr>
                                 <th rowSpan={4} className="border border-slate-300 p-1 w-[3%]">TT</th>
@@ -783,6 +828,10 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     </table>
                 </div>
                  <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end gap-3 no-print">
+                     <button onClick={() => handleExportExcel(specTableRef, 'Ban_dac_ta_de_thi')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 inline-flex items-center">
+                        <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
+                        Tải Excel
+                    </button>
                     <button onClick={() => setActiveTab('matrix')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white">Quay lại</button>
                     <button onClick={() => { setActiveTab('questions'); if (topics.some(t => t.generationStatus === 'pending')) handleGenerateQuestions(); }} className="px-6 py-2.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700">Tiếp tục: Tạo câu hỏi</button>
                 </div>
