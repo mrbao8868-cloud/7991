@@ -165,6 +165,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
      const handleGenerateMatrix = async () => {
         if (!activeApiKey) { onApiKeyError("Vui lòng chọn một Khóa API."); return; }
         setIsGeneratingMatrix(true); setMatrixError(null);
+        setSpecification(null); // Clear specification when matrix is regenerated to ensure alignment.
         try {
             const keysToTry = [activeApiKey, ...apiKeys.filter(k => k !== activeApiKey)];
             const mode = generationOptions?.mode || 'generate';
@@ -233,10 +234,8 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         } finally { setIsGeneratingQuestions(false); }
     };
 
-    // --- Editing Logic ---
     const startEditing = (question: Question) => {
         setEditingQuestionId(question.id);
-        // Deep copy to avoid direct mutation
         setTempQuestion(JSON.parse(JSON.stringify(question)));
     };
 
@@ -248,8 +247,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
 
     const saveEditing = () => {
         if (!tempQuestion) return;
-        
-        // Find topic and update question
         setTopics(prevTopics => prevTopics.map(topic => {
             const qIndex = topic.questions.findIndex(q => q.id === tempQuestion.id);
             if (qIndex !== -1) {
@@ -259,7 +256,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             }
             return topic;
         }));
-        
         setEditingQuestionId(null);
         setTempQuestion(null);
         activeTextareaRef.current = null;
@@ -281,8 +277,8 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         const input = activeTextareaRef.current;
         if (!input) return;
 
-        const start = input.selectionStart;
-        const end = input.selectionEnd;
+        const start = input.selectionStart || 0;
+        const end = input.selectionEnd || 0;
         const text = input.value;
         const before = text.substring(0, start);
         const after = text.substring(end, text.length);
@@ -290,21 +286,17 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         const newValue = before + textToInsert + after;
         const newCursorPos = start + textToInsert.length;
 
-        // Determine which field we are editing based on name or id, simpler to just update state via onChange logic equivalent
-        // But since we need to update state, we need to know WHICH field is focused.
-        // A simple hack is to use the `name` attribute of the input.
-        const fieldName = input.name;
+        const fieldName = input.getAttribute('name');
         
         if (fieldName === 'questionText') {
             handleTempChange('text', newValue);
         } else if (fieldName === 'answer') {
             handleTempChange('answer', newValue);
-        } else if (fieldName.startsWith('option_')) {
+        } else if (fieldName && fieldName.startsWith('option_')) {
             const idx = parseInt(fieldName.split('_')[1]);
             handleOptionChange(idx, newValue);
         }
 
-        // Restore focus and cursor (requires timeout for React state update)
         setTimeout(() => {
             if(activeTextareaRef.current === input) {
                 input.focus();
@@ -313,40 +305,26 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         }, 0);
     };
 
-    // Helper to clean option text (remove A., B., etc if present)
     const cleanOptionText = (text: string) => {
         if (!text) return '';
         return text.replace(/^([A-D]|[a-d])[\.\)\s]+\s*/, '');
     };
 
-    // Helper function to format text for HTML/Word export
     const formatContentForExport = (text: string) => {
         if (!text) return '';
         let processed = text;
-        
-        // Handle Multiplication: * -> x (or similar visual)
         processed = processed.replace(/\*/g, ' × ');
-
-        // Convert ^... to <sup>...</sup>
         processed = processed.replace(/\^\{([^}]+)\}/g, '<sup>$1</sup>');
         processed = processed.replace(/\^([a-zA-Z0-9+\-(),.]+)/g, '<sup>$1</sup>');
-
-        // Convert _... to <sub>...</sub>
         processed = processed.replace(/_\{([^}]+)\}/g, '<sub>$1</sub>');
         processed = processed.replace(/_([a-zA-Z0-9+\-(),.]+)/g, '<sub>$1</sub>');
-        
-        // Handle newlines
         processed = processed.replace(/\n/g, '<br/>');
         return processed;
     };
 
     const handleExportExcel = (ref: React.RefObject<HTMLTableElement>, fileName: string) => {
         if (!ref.current) return;
-
-        // Clone the table to avoid modifying the DOM
         const tableHtml = ref.current.outerHTML;
-
-        // Wrap in a complete HTML document for Excel to interpret it correctly
         const html = `
             <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
             <head>
@@ -361,18 +339,13 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             <body>${tableHtml}</body>
             </html>
         `;
-
-        const blob = new Blob(['\ufeff', html], {
-            type: 'application/vnd.ms-excel'
-        });
-
+        const blob = new Blob(['\ufeff', html], { type: 'application/vnd.ms-excel' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
         link.download = `${fileName}.xls`;
         document.body.appendChild(link);
         link.click();
-        
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
     };
@@ -389,7 +362,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         let questionCounter = 0;
         let mcAnswerCounter = 0;
         
-        // --- PHẦN ĐỀ THI ---
         let htmlContent = `
             <table style="width: 100%; border: none; font-family: 'Times New Roman', serif; font-size: 13pt;">
                 <tr>
@@ -416,7 +388,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             <br />
         `;
 
-        // ... Rendering Questions (Existing Logic) ...
         if ((mcQuestions.length + tfQuestions.length + saQuestions.length) > 0) {
             htmlContent += `<p style="font-weight: bold; text-align: center; text-transform: uppercase;">A. PHẦN TRẮC NGHIỆM KHÁCH QUAN (${tnkqPoints.toLocaleString('vi-VN')} điểm)</p>`;
             if (mcQuestions.length > 0) {
@@ -462,93 +433,55 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
             });
         }
 
-        // --- PHẦN ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM ---
         htmlContent += `<br style="page-break-before: always;" />`;
         htmlContent += `<div style="text-align: center; font-weight: bold; font-size: 14pt; margin-bottom: 20px; margin-top: 20px; text-transform: uppercase;">ĐÁP ÁN VÀ HƯỚNG DẪN CHẤM</div>`;
         
-        // 1. Đáp án Trắc nghiệm nhiều lựa chọn (Dạng bảng)
         if (mcQuestions.length > 0) {
-            htmlContent += `<div style="margin-bottom: 30px;">`;
-            htmlContent += `<p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN I. TRẮC NGHIỆM NHIỀU LỰA CHỌN</p>`;
-            htmlContent += `<table style="width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 10px;">`;
-            
+            htmlContent += `<div style="margin-bottom: 30px;"><p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN I. TRẮC NGHIỆM NHIỀU LỰA CHỌN</p><table style="width: 100%; border-collapse: collapse; text-align: center; margin-bottom: 10px;">`;
             const columns = 10;
             const rows = Math.ceil(mcQuestions.length / columns);
-            
             for(let r = 0; r < rows; r++) {
-                 // Header Row (Question Numbers)
                  htmlContent += `<tr>`;
                  for (let c = 0; c < columns; c++) {
                      const qIdx = r * columns + c;
-                     if (qIdx < mcQuestions.length) {
-                         htmlContent += `<td style="border: 1px solid black; padding: 5px; font-weight: bold; background-color: #f0f0f0; width: ${100/columns}%;">${mcAnswerCounter + qIdx + 1}</td>`;
-                     } else {
-                         htmlContent += `<td style="border: 1px solid black; padding: 5px; width: ${100/columns}%;"></td>`;
-                     }
+                     if (qIdx < mcQuestions.length) htmlContent += `<td style="border: 1px solid black; padding: 5px; font-weight: bold; background-color: #f0f0f0; width: ${100/columns}%;">${mcAnswerCounter + qIdx + 1}</td>`;
+                     else htmlContent += `<td style="border: 1px solid black; padding: 5px; width: ${100/columns}%;"></td>`;
                  }
-                 htmlContent += `</tr>`;
-                 
-                 // Data Row (Answers)
-                 htmlContent += `<tr>`;
+                 htmlContent += `</tr><tr>`;
                  for (let c = 0; c < columns; c++) {
                      const qIdx = r * columns + c;
                      if (qIdx < mcQuestions.length) {
                          const rawAns = mcQuestions[qIdx].answer ? mcQuestions[qIdx].answer.trim() : '';
-                         // Strict extraction: Try to find a single letter [A-D] either at start or standalone
                          const match = rawAns.match(/([A-D])(\.|\s|$)/i) || rawAns.match(/^([A-D])/i);
                          const letter = match ? match[1].toUpperCase() : rawAns.charAt(0).toUpperCase().replace(/[^A-D]/g, '');
-                         
                          htmlContent += `<td style="border: 1px solid black; padding: 5px;">${letter}</td>`;
-                     } else {
-                         htmlContent += `<td style="border: 1px solid black; padding: 5px;"></td>`;
-                     }
+                     } else htmlContent += `<td style="border: 1px solid black; padding: 5px;"></td>`;
                  }
                  htmlContent += `</tr>`;
             }
             htmlContent += `</table></div>`;
         }
 
-        // 2. Đáp án Đúng/Sai (Dạng bảng 2 cột cho khoa học)
         if (tfQuestions.length > 0) {
-            htmlContent += `<div style="margin-bottom: 30px;">`;
-            htmlContent += `<p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN II. TRẮC NGHIỆM ĐÚNG SAI</p>`;
-            htmlContent += `<table style="width: 100%; border-collapse: collapse;">`;
-            htmlContent += `<tr style="background-color: #f0f0f0; text-align: center; font-weight: bold;"><td style="border: 1px solid black; padding: 5px; width: 100px;">Câu</td><td style="border: 1px solid black; padding: 5px;">Đáp án</td></tr>`;
-            
+            htmlContent += `<div style="margin-bottom: 30px;"><p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN II. TRẮC NGHIỆM ĐÚNG SAI</p><table style="width: 100%; border-collapse: collapse;"><tr style="background-color: #f0f0f0; text-align: center; font-weight: bold;"><td style="border: 1px solid black; padding: 5px; width: 100px;">Câu</td><td style="border: 1px solid black; padding: 5px;">Đáp án</td></tr>`;
             tfQuestions.forEach((q, idx) => {
-                htmlContent += `<tr>
-                    <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold;">Câu ${idx + 1}</td>
-                    <td style="border: 1px solid black; padding: 5px;">${formatContentForExport(q.answer)}</td>
-                </tr>`;
+                htmlContent += `<tr><td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold;">Câu ${idx + 1}</td><td style="border: 1px solid black; padding: 5px;">${formatContentForExport(q.answer)}</td></tr>`;
             });
             htmlContent += `</table></div>`;
         }
 
-        // 3. Đáp án Trả lời ngắn (Dạng bảng 2 cột)
         if (saQuestions.length > 0) {
-            htmlContent += `<div style="margin-bottom: 30px;">`;
-            htmlContent += `<p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN III. TRẢ LỜI NGẮN</p>`;
-            htmlContent += `<table style="width: 100%; border-collapse: collapse;">`;
-             htmlContent += `<tr style="background-color: #f0f0f0; text-align: center; font-weight: bold;"><td style="border: 1px solid black; padding: 5px; width: 100px;">Câu</td><td style="border: 1px solid black; padding: 5px;">Đáp án</td></tr>`;
-
+            htmlContent += `<div style="margin-bottom: 30px;"><p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN III. TRẢ LỜI NGẮN</p><table style="width: 100%; border-collapse: collapse;"><tr style="background-color: #f0f0f0; text-align: center; font-weight: bold;"><td style="border: 1px solid black; padding: 5px; width: 100px;">Câu</td><td style="border: 1px solid black; padding: 5px;">Đáp án</td></tr>`;
             saQuestions.forEach((q, idx) => {
-                htmlContent += `<tr>
-                    <td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold;">Câu ${idx + 1}</td>
-                    <td style="border: 1px solid black; padding: 5px;">${formatContentForExport(q.answer)}</td>
-                </tr>`;
+                htmlContent += `<tr><td style="border: 1px solid black; padding: 5px; text-align: center; font-weight: bold;">Câu ${idx + 1}</td><td style="border: 1px solid black; padding: 5px;">${formatContentForExport(q.answer)}</td></tr>`;
             });
             htmlContent += `</table></div>`;
         }
 
-        // 4. Đáp án Tự luận
         if (essayQuestions.length > 0) {
-            htmlContent += `<div style="margin-bottom: 30px;">`;
-            htmlContent += `<p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN IV. TỰ LUẬN</p>`;
+            htmlContent += `<div style="margin-bottom: 30px;"><p style="font-weight: bold; margin-bottom: 10px; font-size: 13pt;">PHẦN IV. TỰ LUẬN</p>`;
              essayQuestions.forEach((q, idx) => {
-                htmlContent += `<div style="margin-bottom: 15px;">
-                    <p style="font-weight: bold; margin-bottom: 5px;">Câu ${idx + 1}:</p>
-                    <div style="margin-left: 20px; border-left: 3px solid #e5e7eb; padding-left: 10px;">${formatContentForExport(q.answer)}</div>
-                </div>`;
+                htmlContent += `<div style="margin-bottom: 15px;"><p style="font-weight: bold; margin-bottom: 5px;">Câu ${idx + 1}:</p><div style="margin-left: 20px; border-left: 3px solid #e5e7eb; padding-left: 10px;">${formatContentForExport(q.answer)}</div></div>`;
             });
             htmlContent += `</div>`;
         }
@@ -557,27 +490,16 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
     };
 
     const renderMatrix = () => {
-        // Use configured point values
         const SCORE_MC = examConfig.mcPointValue;
         const SCORE_TF = examConfig.tfPointValue;
         const SCORE_SA = examConfig.saPointValue;
-        
         const groupedTopics = topics.reduce((acc, t) => { (acc[t.chapter] = acc[t.chapter] || []).push(t); return acc; }, {} as {[key: string]: Topic[]});
-        
-        // Calculate totals for footer
         const totals = questionKeys.reduce((acc, k) => ({ ...acc, [k]: 0 }), {} as TopicConfig);
         topics.forEach(t => questionKeys.forEach(k => { totals[k] += t[k] || 0; }));
-        
         const totalEssayCount = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
         const essayScorePerItem = totalEssayCount > 0 ? examConfig.essayPoints / totalEssayCount : 0;
-        const totalTfQuestions = totals.tf_knowledge + totals.tf_comprehension + totals.tf_application;
-        
-        // Score Calculation Logic
-        const pointsForMcSa = (totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) * SCORE_MC + (totals.sa_knowledge + totals.sa_comprehension + totals.sa_application) * SCORE_SA;
-        
         const formatPoints = (points: number) => Number.isInteger(points) ? points.toString() : points.toFixed(2).replace('.', ',');
         const renderCell = (c: number) => !c ? <td className="border border-slate-300 p-1"></td> : <td className="border border-slate-300 p-1 text-center font-medium">{c}</td>;
-        
         let idx = 0;
         return (
             <div>
@@ -621,12 +543,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                         const rowTotalKnow = (t.mc_knowledge || 0) + (t.tf_knowledge || 0) + (t.sa_knowledge || 0) + (t.essay_knowledge || 0);
                                         const rowTotalComp = (t.mc_comprehension || 0) + (t.tf_comprehension || 0) + (t.sa_comprehension || 0) + (t.essay_comprehension || 0);
                                         const rowTotalApp = (t.mc_application || 0) + (t.tf_application || 0) + (t.sa_application || 0) + (t.essay_application || 0);
-                                        
-                                        const score = (t.mc_knowledge + t.mc_comprehension + t.mc_application) * SCORE_MC + 
-                                                      (t.tf_knowledge + t.tf_comprehension + t.tf_application) * SCORE_TF + 
-                                                      (t.sa_knowledge + t.sa_comprehension + t.sa_application) * SCORE_SA + 
-                                                      (t.essay_knowledge + t.essay_comprehension + t.essay_application) * essayScorePerItem;
-                                        
+                                        const score = (t.mc_knowledge + t.mc_comprehension + t.mc_application) * SCORE_MC + (t.tf_knowledge + t.tf_comprehension + t.tf_application) * SCORE_TF + (t.sa_knowledge + t.sa_comprehension + t.sa_application) * SCORE_SA + (t.essay_knowledge + t.essay_comprehension + t.essay_application) * essayScorePerItem;
                                         return (
                                         <tr key={t.id}>
                                             {tIdx === 0 && <td rowSpan={chapterTopics.length} className="border border-slate-300 p-1 text-center align-middle font-semibold">{++idx}</td>}
@@ -658,7 +575,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <td className="border border-slate-300 p-1 text-center">{totals.essay_knowledge || ''}</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.essay_comprehension || ''}</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.essay_application || ''}</td>
-                                {/* Grand Totals B/H/VD */}
                                 <td className="border border-slate-300 p-1 text-center">{totals.mc_knowledge + totals.tf_knowledge + totals.sa_knowledge + totals.essay_knowledge || ''}</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.mc_comprehension + totals.tf_comprehension + totals.sa_comprehension + totals.essay_comprehension || ''}</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.mc_application + totals.tf_application + totals.sa_application + totals.essay_application || ''}</td>
@@ -686,9 +602,8 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     </table>
                 </div>
                 <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end gap-3 no-print">
-                     <button onClick={() => handleExportExcel(matrixTableRef, 'Ma_tran_de_thi')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 inline-flex items-center">
-                        <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
-                        Tải Excel
+                    <button onClick={() => handleExportExcel(matrixTableRef, 'Ma_tran_de_thi')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 inline-flex items-center">
+                        <DocumentArrowDownIcon className="w-4 h-4 mr-2" /> Tải Excel
                     </button>
                     <button onClick={onBack} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white">Quay lại</button>
                     <button onClick={() => { setActiveTab('spec'); if (!specification) handleGenerateSpec(); }} className="px-6 py-2.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700">Tiếp tục: Bản đặc tả</button>
@@ -699,30 +614,17 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
 
     const renderSpecification = () => {
         if (!specification) return null;
-
-        // Group by chapter
-        const groupedSpec = specification.reduce((acc, t) => { 
-            (acc[t.chapter] = acc[t.chapter] || []).push(t); 
-            return acc; 
-        }, {} as Record<string, SpecTopic[]>);
-
-        // Define config values for footer calculation
+        const groupedSpec = specification.reduce((acc, t) => { (acc[t.chapter] = acc[t.chapter] || []).push(t); return acc; }, {} as Record<string, SpecTopic[]>);
         const SCORE_MC = examConfig.mcPointValue;
         const SCORE_TF = examConfig.tfPointValue;
         const SCORE_SA = examConfig.saPointValue;
-        
-        // Calculate totals for footer
         const totals = questionKeys.reduce((acc, k) => ({ ...acc, [k]: 0 }), {} as TopicConfig);
         specification.forEach(t => t.objectives.forEach(obj => questionKeys.forEach(k => { totals[k] += (obj.counts[k] || 0); })));
-        
         const totalEssayCount = totals.essay_knowledge + totals.essay_comprehension + totals.essay_application;
         const essayScorePerItem = totalEssayCount > 0 ? examConfig.essayPoints / totalEssayCount : 0;
-        
         const formatPoints = (points: number) => Number.isInteger(points) ? points.toString() : points.toFixed(2).replace('.', ',');
         const renderCell = (c: number | undefined) => !c ? <td className="border border-slate-300 p-1"></td> : <td className="border border-slate-300 p-1 text-center font-medium">{c}</td>;
-
         let tt = 0;
-
         return (
             <div>
                 <h2 className="text-xl font-bold text-center mb-1 uppercase">B. BẢN ĐẶC TẢ ĐỀ KIỂM TRA</h2>
@@ -757,45 +659,30 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 const chapterRowSpan = topics.reduce((sum, t) => sum + Math.max(t.objectives.length, 1), 0);
                                 tt++;
                                 let isFirstRowOfChapter = true;
-
                                 return topics.map((topic, tIdx) => {
                                     const objectives = topic.objectives && topic.objectives.length > 0 ? topic.objectives : [{ specificCompetency: '', counts: {} } as ObjectiveSpec];
                                     const topicRowSpan = objectives.length;
-
                                     return objectives.map((obj, oIdx) => {
                                         const row = (
                                             <tr key={`${topic.id}-${oIdx}`}>
                                                 {isFirstRowOfChapter && <td rowSpan={chapterRowSpan} className="border border-slate-300 p-1 text-center align-middle font-semibold">{tt}</td>}
                                                 {isFirstRowOfChapter && <td rowSpan={chapterRowSpan} className="border border-slate-300 p-1 align-middle font-semibold">{chapter}</td>}
-                                                
                                                 {oIdx === 0 && <td rowSpan={topicRowSpan} className="border border-slate-300 p-1 align-middle">{topic.name}</td>}
-                                                
                                                 <td className="border border-slate-300 p-2 text-left align-top whitespace-pre-wrap">{obj.specificCompetency}</td>
-                                                
-                                                {renderCell(obj.counts.mc_knowledge)}
-                                                {renderCell(obj.counts.mc_comprehension)}
-                                                {renderCell(obj.counts.mc_application)}
-                                                
-                                                {renderCell(obj.counts.tf_knowledge)}
-                                                {renderCell(obj.counts.tf_comprehension)}
-                                                {renderCell(obj.counts.tf_application)}
-                                                
-                                                {renderCell(obj.counts.sa_knowledge)}
-                                                {renderCell(obj.counts.sa_comprehension)}
-                                                {renderCell(obj.counts.sa_application)}
-                                                
-                                                {renderCell(obj.counts.essay_knowledge)}
-                                                {renderCell(obj.counts.essay_comprehension)}
-                                                {renderCell(obj.counts.essay_application)}
+                                                {renderCell(obj.counts.mc_knowledge)} {renderCell(obj.counts.mc_comprehension)} {renderCell(obj.counts.mc_application)}
+                                                {renderCell(obj.counts.tf_knowledge)} {renderCell(obj.counts.tf_comprehension)} {renderCell(obj.counts.tf_application)}
+                                                {renderCell(obj.counts.sa_knowledge)} {renderCell(obj.counts.sa_comprehension)} {renderCell(obj.counts.sa_application)}
+                                                {renderCell(obj.counts.essay_knowledge)} {renderCell(obj.counts.essay_comprehension)} {renderCell(obj.counts.essay_application)}
                                             </tr>
                                         );
-
                                         if (isFirstRowOfChapter) isFirstRowOfChapter = false;
                                         return row;
                                     });
                                 });
                             })}
-                            <tr className="font-bold bg-slate-50">
+                        </tbody>
+                        <tfoot className="font-bold bg-slate-50">
+                            <tr>
                                 <td colSpan={4} className="border border-slate-300 p-2 text-right">Tổng số câu</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.mc_knowledge || ''}</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.mc_comprehension || ''}</td>
@@ -810,27 +697,26 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                 <td className="border border-slate-300 p-1 text-center">{totals.essay_comprehension || ''}</td>
                                 <td className="border border-slate-300 p-1 text-center">{totals.essay_application || ''}</td>
                             </tr>
-                            <tr className="font-bold bg-slate-50">
+                            <tr>
                                 <td colSpan={4} className="border border-slate-300 p-2 text-right">Tổng số điểm</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) * SCORE_MC)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.tf_knowledge + totals.tf_comprehension + totals.tf_application) * SCORE_TF)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.sa_knowledge + totals.sa_comprehension + totals.sa_application) * SCORE_SA)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints((totals.essay_knowledge + totals.essay_comprehension + totals.essay_application) * essayScorePerItem)}</td>
                             </tr>
-                             <tr className="font-bold bg-slate-50">
+                             <tr>
                                 <td colSpan={4} className="border border-slate-300 p-2 text-right">Tỉ lệ %</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.mc_knowledge + totals.mc_comprehension + totals.mc_application) * SCORE_MC / 10) * 100)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.tf_knowledge + totals.tf_comprehension + totals.tf_application) * SCORE_TF / 10) * 100)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.sa_knowledge + totals.sa_comprehension + totals.sa_application) * SCORE_SA / 10) * 100)}</td>
                                 <td colSpan={3} className="border border-slate-300 p-1 text-center">{formatPoints(((totals.essay_knowledge + totals.essay_comprehension + totals.essay_application) * essayScorePerItem / 10) * 100)}</td>
                             </tr>
-                        </tbody>
+                        </tfoot>
                     </table>
                 </div>
                  <div className="mt-8 pt-6 border-t border-slate-200 flex justify-end gap-3 no-print">
-                     <button onClick={() => handleExportExcel(specTableRef, 'Ban_dac_ta_de_thi')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 inline-flex items-center">
-                        <DocumentArrowDownIcon className="w-4 h-4 mr-2" />
-                        Tải Excel
+                    <button onClick={() => handleExportExcel(specTableRef, 'Ban_dac_ta_de_thi')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 inline-flex items-center">
+                        <DocumentArrowDownIcon className="w-4 h-4 mr-2" /> Tải Excel
                     </button>
                     <button onClick={() => setActiveTab('matrix')} className="px-6 py-2.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white">Quay lại</button>
                     <button onClick={() => { setActiveTab('questions'); if (topics.some(t => t.generationStatus === 'pending')) handleGenerateQuestions(); }} className="px-6 py-2.5 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700">Tiếp tục: Tạo câu hỏi</button>
@@ -844,37 +730,19 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
         try {
             const htmlContent = `
                 <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-                <head>
-                    <meta charset='utf-8'>
-                    <title>${examTitle}</title>
-                    <style>
-                        body { font-family: 'Times New Roman', serif; font-size: 13pt; }
-                        table { border-collapse: collapse; width: 100%; }
-                        td, th { border: none; padding: 5px; vertical-align: top; }
-                    </style>
-                </head>
-                <body>
-                    ${previewHtml}
-                </body>
-                </html>
+                <head><meta charset='utf-8'><title>${examTitle}</title><style>body { font-family: 'Times New Roman', serif; font-size: 13pt; } table { border-collapse: collapse; width: 100%; } td, th { border: none; padding: 5px; vertical-align: top; }</style></head>
+                <body>${previewHtml}</body></html>
             `;
-            
-            const blob = new Blob(['\ufeff', htmlContent], {
-                type: 'application/msword'
-            });
-            
+            const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
             link.download = `${examTitle ? examTitle.replace(/\s+/g, '_') : 'De_thi'}.doc`;
             document.body.appendChild(link);
             link.click();
-            
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
-            
         } catch (error) {
-            console.error("Export error:", error);
             onStatusUpdate("Lỗi khi xuất file Word.");
         } finally {
             setIsExporting(false);
@@ -888,22 +756,15 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                     <Stepper activeTab={activeTab} matrixDone={topics.length > 0} specDone={!!specification} questionsDone={topics.every(t => t.generationStatus === 'completed') && topics.length > 0} onTabChange={setActiveTab} canAccessSpec={topics.length > 0} canAccessQuestions={!!specification} exportStepName={exportStepName} />
                 </div>
             </div>
-
             <div className="flex-grow p-4 sm:p-6 lg:p-8 overflow-y-auto bg-slate-100">
                 <div className="max-w-[1920px] mx-auto bg-white rounded-xl shadow-lg border border-slate-200 min-h-[600px] flex flex-col p-6">
                     {activeTab === 'matrix' && (
                         <div className="space-y-6">
                             {isGeneratingMatrix ? <GenerationPlaceholder isLoading={true} title="Đang tạo ma trận" description="AI đang xây dựng khung ma trận chuẩn công văn 7991..." /> 
                             : matrixError ? <GenerationPlaceholder error={matrixError} onRetry={handleGenerateMatrix} /> 
-                            : (
-                                <>
-                                    {renderMatrix()}
-                                    {/* Navigation buttons are now inside renderMatrix */}
-                                </>
-                            )}
+                            : renderMatrix()}
                         </div>
                     )}
-
                     {activeTab === 'spec' && (
                         <div className="space-y-6">
                             {isGeneratingSpec ? <GenerationPlaceholder isLoading={true} title="Đang tạo Bản đặc tả" description="AI đang tạo bản đặc tả..." /> 
@@ -911,7 +772,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                             : renderSpecification()}
                         </div>
                     )}
-
                     {activeTab === 'questions' && (
                          <div className="space-y-6">
                             {questionsError && !isGeneratingQuestions ? <GenerationPlaceholder error={questionsError} onRetry={handleGenerateQuestions} /> 
@@ -920,12 +780,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                      <h3 className="text-xl font-semibold text-slate-800 mb-6">AI đang soạn thảo câu hỏi...</h3>
                                      <div className="max-w-3xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                         {topics.map(topic => (
-                                            <div key={topic.id} className={`p-4 rounded-lg border text-left transition-colors ${
-                                                topic.generationStatus === 'completed' ? 'bg-green-50 border-green-200' :
-                                                topic.generationStatus === 'failed' ? 'bg-red-50 border-red-200' :
-                                                topic.generationStatus === 'generating' ? 'bg-primary-50 border-primary-200 ring-1 ring-primary-300' :
-                                                'bg-white border-slate-200 opacity-60'
-                                            }`}>
+                                            <div key={topic.id} className={`p-4 rounded-lg border text-left transition-colors ${topic.generationStatus === 'completed' ? 'bg-green-50 border-green-200' : topic.generationStatus === 'failed' ? 'bg-red-50 border-red-200' : topic.generationStatus === 'generating' ? 'bg-primary-50 border-primary-200 ring-1 ring-primary-300' : 'bg-white border-slate-200 opacity-60'}`}>
                                                 <div className="flex items-center justify-between mb-2">
                                                     <span className="text-xs font-bold uppercase text-slate-500 truncate max-w-[70%]">{topic.chapter}</span>
                                                     {topic.generationStatus === 'completed' ? <CheckIcon className="w-5 h-5 text-green-600"/> : topic.generationStatus === 'failed' ? <ExclamationTriangleIcon className="w-5 h-5 text-red-500"/> : <SmallSpinner />}
@@ -959,98 +814,53 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                                         {topic.questions.map((q, qIdx) => (
                                                             <div key={q.id} className="group relative bg-slate-50 p-4 rounded-md border border-slate-100 hover:border-primary-300 transition-colors">
                                                                 {editingQuestionId === q.id && tempQuestion ? (
-                                                                    // --- EDIT MODE ---
                                                                     <div className="bg-white p-4 rounded border border-primary-500 shadow-sm">
                                                                         <div className="mb-2 flex justify-between items-center">
                                                                             <span className="text-sm font-bold text-primary-700">Chỉnh sửa câu hỏi</span>
                                                                             <span className="text-xs text-slate-500">Hỗ trợ LaTeX</span>
                                                                         </div>
-                                                                        
-                                                                        {/* ToolBar */}
                                                                         <MathKeyboard onInsert={insertAtCursor} />
-
                                                                         <div className="mb-4">
                                                                             <label className="block text-xs font-medium text-slate-500 mb-1">Nội dung câu hỏi</label>
-                                                                            <textarea
-                                                                                name="questionText"
-                                                                                ref={activeTextareaRef}
-                                                                                value={tempQuestion.text}
-                                                                                onChange={(e) => handleTempChange('text', e.target.value)}
-                                                                                className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
-                                                                                rows={3}
-                                                                            />
+                                                                            <textarea name="questionText" ref={el => { if (editingQuestionId === q.id) activeTextareaRef.current = el; }} value={tempQuestion.text} onChange={(e) => handleTempChange('text', e.target.value)} className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500" rows={3}/>
                                                                             <div className="mt-1 text-xs text-slate-400">Xem trước: <MathRenderer content={tempQuestion.text} /></div>
                                                                         </div>
-
-                                                                        {/* Options for MC */}
                                                                         {tempQuestion.type === QuestionType.MULTIPLE_CHOICE && tempQuestion.options && (
                                                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
                                                                                 {tempQuestion.options.map((opt, oIdx) => (
                                                                                     <div key={oIdx}>
                                                                                         <label className="block text-xs font-medium text-slate-500 mb-1">Lựa chọn {['A','B','C','D'][oIdx]}</label>
-                                                                                        <textarea // Changed to textarea for multi-line support
-                                                                                            name={`option_${oIdx}`}
-                                                                                            value={cleanOptionText(opt)}
-                                                                                            onFocus={(e) => activeTextareaRef.current = e.target}
-                                                                                            onChange={(e) => handleOptionChange(oIdx, e.target.value)}
-                                                                                            className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
-                                                                                            rows={1}
-                                                                                        />
+                                                                                        <textarea name={`option_${oIdx}`} value={cleanOptionText(opt)} onFocus={(e) => activeTextareaRef.current = e.target} onChange={(e) => handleOptionChange(oIdx, e.target.value)} className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500" rows={1}/>
                                                                                     </div>
                                                                                 ))}
                                                                             </div>
                                                                         )}
-
-                                                                        {/* Options for True/False */}
                                                                         {tempQuestion.type === QuestionType.TRUE_FALSE && tempQuestion.options && (
                                                                              <div className="space-y-2 mb-4">
                                                                                 {tempQuestion.options.map((opt, oIdx) => (
                                                                                     <div key={oIdx} className="flex gap-2 items-start">
                                                                                         <span className="mt-2 text-sm font-bold w-6">{['a','b','c','d'][oIdx]})</span>
                                                                                         <div className="flex-grow">
-                                                                                            <textarea
-                                                                                                name={`option_${oIdx}`}
-                                                                                                value={opt}
-                                                                                                onFocus={(e) => activeTextareaRef.current = e.target}
-                                                                                                onChange={(e) => handleOptionChange(oIdx, e.target.value)}
-                                                                                                className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
-                                                                                                rows={1}
-                                                                                            />
+                                                                                            <textarea name={`option_${oIdx}`} value={opt} onFocus={(e) => activeTextareaRef.current = e.target} onChange={(e) => handleOptionChange(oIdx, e.target.value)} className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500" rows={1}/>
                                                                                         </div>
                                                                                     </div>
                                                                                 ))}
                                                                              </div>
                                                                         )}
-
                                                                         <div className="mb-4">
                                                                             <label className="block text-xs font-medium text-slate-500 mb-1">Đáp án</label>
-                                                                            <input
-                                                                                name="answer"
-                                                                                value={tempQuestion.answer}
-                                                                                onFocus={(e) => activeTextareaRef.current = e.target}
-                                                                                onChange={(e) => handleTempChange('answer', e.target.value)}
-                                                                                className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
-                                                                            />
+                                                                            <input name="answer" value={tempQuestion.answer} onFocus={(e) => activeTextareaRef.current = e.target} onChange={(e) => handleTempChange('answer', e.target.value)} className="w-full p-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-primary-500"/>
                                                                         </div>
-
                                                                         <div className="flex justify-end gap-2">
                                                                             <button onClick={cancelEditing} className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded hover:bg-slate-50">Hủy</button>
                                                                             <button onClick={saveEditing} className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded hover:bg-primary-700">Lưu thay đổi</button>
                                                                         </div>
                                                                     </div>
                                                                 ) : (
-                                                                    // --- DISPLAY MODE ---
                                                                     <>
                                                                         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                                                                            <button 
-                                                                                onClick={() => startEditing(q)}
-                                                                                className="p-1.5 bg-white text-primary-600 border border-primary-200 rounded shadow-sm hover:bg-primary-50"
-                                                                                title="Chỉnh sửa câu hỏi"
-                                                                            >
-                                                                                <PencilIcon className="w-4 h-4" />
-                                                                            </button>
+                                                                            <button onClick={() => startEditing(q)} className="p-1.5 bg-white text-primary-600 border border-primary-200 rounded shadow-sm hover:bg-primary-50" title="Chỉnh sửa câu hỏi"><PencilIcon className="w-4 h-4" /></button>
                                                                         </div>
-
                                                                         <div className="flex gap-2">
                                                                             <span className="font-bold text-slate-700 whitespace-nowrap">Câu {qIdx + 1}:</span>
                                                                             <div className="flex-grow">
@@ -1058,9 +868,7 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                                                                                 {q.type === QuestionType.MULTIPLE_CHOICE && q.options && (
                                                                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 ml-2">
                                                                                         {q.options.map((opt, oIdx) => (
-                                                                                            <div key={oIdx} className={`text-sm ${['A','B','C','D'][oIdx] === q.answer ? 'font-semibold text-green-700' : 'text-slate-600'}`}>
-                                                                                                <span className="font-bold mr-1">{['A','B','C','D'][oIdx]}.</span><MathRenderer content={cleanOptionText(opt)} />
-                                                                                            </div>
+                                                                                            <div key={oIdx} className={`text-sm ${['A','B','C','D'][oIdx] === q.answer ? 'font-semibold text-green-700' : 'text-slate-600'}`}><span className="font-bold mr-1">{['A','B','C','D'][oIdx]}.</span><MathRenderer content={cleanOptionText(opt)} /></div>
                                                                                         ))}
                                                                                     </div>
                                                                                 )}
@@ -1091,7 +899,6 @@ const ExamWorkspace: React.FC<ExamWorkspaceProps> = ({ examConfig, documentImage
                             )}
                         </div>
                     )}
-
                     {activeTab === 'export' && (
                         <div className="space-y-6">
                             <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-primary-50 p-4 rounded-lg border border-primary-200">

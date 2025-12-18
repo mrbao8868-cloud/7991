@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { BalDigitechLogo, LockClosedIcon, UserIcon, ArrowTopRightOnSquareIcon } from './icons';
+import React, { useState, useEffect } from 'react';
+import { BalDigitechLogo, LockClosedIcon, UserIcon, ExclamationTriangleIcon } from './icons';
 import Spinner from './Spinner';
 
 interface LoginScreenProps {
@@ -14,6 +14,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [userIp, setUserIp] = useState<string>('Đang lấy...');
+
+    useEffect(() => {
+        // Fetch public IP address
+        fetch('https://api.ipify.org?format=json')
+            .then(res => res.json())
+            .then(data => setUserIp(data.ip))
+            .catch(() => setUserIp('Không xác định'));
+    }, []);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -33,12 +42,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             }
             const text = await response.text();
             
-            // Parse CSV: Split by lines, then by comma.
-            // Assumption based on description: Col A is User, Col B is Pass.
             const rows = text.split(/\r?\n/).map(row => row.split(','));
             
-            // Check credentials. Skip the first row (header).
-            // Robust check: trim whitespace, ensure row has at least 2 columns.
             const userFound = rows.slice(1).some(row => {
                 if (row.length < 2) return false;
                 const u = row[0].trim();
@@ -121,11 +126,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                             </div>
                         </div>
 
+                        <div className="p-3 bg-amber-50 rounded-md border border-amber-200">
+                            <div className="flex items-center gap-2 text-amber-800 text-sm font-semibold">
+                                <ExclamationTriangleIcon className="w-4 h-4 text-amber-600" />
+                                Địa chỉ IP của bạn: <span className="font-mono bg-amber-100 px-1.5 rounded">{userIp}</span>
+                            </div>
+                            <p className="mt-2 text-[11px] text-red-600 font-bold uppercase leading-tight">
+                                Cảnh báo: Nếu chia sẻ cho máy tính khác sẽ xóa tài khoản
+                            </p>
+                        </div>
+
                         {error && (
                             <div className="rounded-md bg-red-50 p-4">
                                 <div className="flex">
                                     <div className="flex-shrink-0">
-                                        {/* Simple Error Icon */}
                                         <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                                         </svg>
@@ -146,7 +160,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                             <button
                                 type="submit"
                                 disabled={isLoading}
-                                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-primary-300 disabled:cursor-not-allowed"
+                                className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:bg-primary-300 disabled:cursor-not-allowed transition-all"
                             >
                                 {isLoading ? (
                                     <>
